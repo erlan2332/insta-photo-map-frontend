@@ -456,6 +456,11 @@ function App() {
   function closeMobileDetail() {
     setMobileDetailVisible(false)
     setImageViewerOpen(false)
+    setSelectedPlaceId(null)
+    setSelectedPlace(null)
+    setActivePhotoIndex(0)
+    setDetailLoadingState('idle')
+    setDetailFeedbackMessage('')
   }
 
   const showPreviousPhoto = useCallback(() => {

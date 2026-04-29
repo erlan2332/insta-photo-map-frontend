@@ -21,13 +21,16 @@ export default function PlaceStory({
     )
   }
 
+  const coverSrc = resolveMediaUrl(currentPhoto?.previewUrl || currentPhoto?.url || place.coverPhotoUrl)
+
   return (
     <div className="story-card">
       <div className="story-cover">
         <div className="story-cover__frame">
           <div className="story-cover__media">
             <img
-              src={resolveMediaUrl(currentPhoto?.previewUrl || currentPhoto?.url || place.coverPhotoUrl)}
+              key={coverSrc}
+              src={coverSrc}
               alt={currentPhoto?.altText || place.title}
               fetchPriority="high"
             />
