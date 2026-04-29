@@ -18,6 +18,35 @@ const MAX_VIEWPORT_PAGE_REQUESTS = 60
 const MAX_VIEWPORT_CACHE_ENTRIES = 6
 const PLACE_DETAILS_CACHE_LIMIT = 24
 
+function createPreviewPlace(place) {
+  if (!place) {
+    return null
+  }
+
+  return {
+    id: place.id,
+    placeCode: place.placeCode,
+    title: place.title,
+    city: place.city,
+    description: '',
+    latitude: place.latitude,
+    longitude: place.longitude,
+    tags: [],
+    photos: place.coverPhotoUrl
+      ? [{
+        id: `preview-${place.id}`,
+        url: place.coverPhotoUrl,
+        previewUrl: place.coverPhotoUrl,
+        thumbnailUrl: place.coverPhotoUrl,
+        altText: place.title,
+        sortOrder: 0,
+      }]
+      : [],
+    coverPhotoUrl: place.coverPhotoUrl,
+    createdAt: place.createdAt,
+  }
+}
+
 function toLongitudeRanges(west, east) {
   if (east >= west) {
     return [{ start: west, end: east }]
@@ -107,7 +136,8 @@ function App() {
     ? selectedPlaceId
     : null
   const selectedPlacePreview = visiblePlaces.find((place) => place.id === stableSelectedPlaceId) ?? null
-  const activePlace = selectedPlace?.id === stableSelectedPlaceId ? selectedPlace : null
+  const previewPlace = selectedPlacePreview ? createPreviewPlace(selectedPlacePreview) : null
+  const activePlace = selectedPlace?.id === stableSelectedPlaceId ? selectedPlace : previewPlace
   const currentPhoto =
     activePlace && activePlace.photos.length
       ? activePlace.photos[Math.min(activePhotoIndex, activePlace.photos.length - 1)]
@@ -117,12 +147,18 @@ function App() {
 
   function selectPlace(place) {
     const cachedPlace = placeDetailsCacheRef.current.get(place.id) ?? null
+    const nextSelectedPlace = cachedPlace ?? createPreviewPlace(place)
+
     setSelectedPlaceId(place.id)
-    setSelectedPlace((current) => (current?.id === place.id ? current : cachedPlace))
+    setSelectedPlace((current) => (current?.id === place.id ? current : nextSelectedPlace))
     setActivePhotoIndex(0)
     setMobileDetailVisible(true)
     setImageViewerOpen(false)
     setDetailFeedbackMessage('')
+
+    if (place.coverPhotoUrl) {
+      preloadImage(resolveMediaUrl(place.coverPhotoUrl))
+    }
   }
 
   function commitMapPlaces(data, isSearch) {
@@ -451,7 +487,7 @@ function App() {
       ? 'loading'
       : stableSelectedPlaceId && detailLoadingState === 'error'
         ? 'error'
-        : stableSelectedPlaceId && detailLoadingState === 'loading'
+        : stableSelectedPlaceId && detailLoadingState === 'loading' && !activePlace
           ? 'loading'
           : 'ready'
 
