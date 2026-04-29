@@ -83,6 +83,7 @@ function App() {
   const [activePhotoIndex, setActivePhotoIndex] = useState(0)
   const [searchInput, setSearchInput] = useState('')
   const [activeSearchCode, setActiveSearchCode] = useState('')
+  const [searchRequestVersion, setSearchRequestVersion] = useState(0)
   const [mobileDetailVisible, setMobileDetailVisible] = useState(false)
   const [imageViewerOpen, setImageViewerOpen] = useState(false)
   const [mapLoadingState, setMapLoadingState] = useState('loading')
@@ -166,45 +167,30 @@ function App() {
   })
 
   useEffect(() => {
-    if (!activeSearchCode && !mapViewport) {
+    if (!activeSearchCode) {
       return undefined
-    }
-
-    if (!activeSearchCode && mapViewport) {
-      const cachedEntry = viewportCacheRef.current.find((entry) => viewportContains(entry.viewport, mapViewport))
-
-      if (cachedEntry) {
-        setMapFeedbackMessage('')
-        commitMapPlaces(cachedEntry.items, false)
-        return undefined
-      }
     }
 
     const abortController = new AbortController()
     let cancelled = false
 
-    async function loadMapPlaces() {
+    async function loadSearchResults() {
       try {
         setMapLoadingState('loading')
         setMapFeedbackMessage('')
-        const data = activeSearchCode
-          ? (await fetchMapPlacesPage({
-              code: activeSearchCode,
-              page: 0,
-              size: 8,
-              signal: abortController.signal,
-            })).items
-          : await fetchViewportPlaces(mapViewport, abortController.signal)
+
+        const data = (await fetchMapPlacesPage({
+          code: activeSearchCode,
+          page: 0,
+          size: 8,
+          signal: abortController.signal,
+        })).items
 
         if (cancelled) {
           return
         }
 
-        if (!activeSearchCode && mapViewport) {
-          rememberViewportItems(mapViewport, data)
-        }
-
-        commitMapPlaces(data, Boolean(activeSearchCode))
+        commitMapPlaces(data, true)
       } catch (error) {
         if (!cancelled && error.name !== 'AbortError') {
           setMapLoadingState('error')
@@ -213,7 +199,52 @@ function App() {
       }
     }
 
-    void loadMapPlaces()
+    void loadSearchResults()
+
+    return () => {
+      cancelled = true
+      abortController.abort()
+    }
+  }, [activeSearchCode, searchRequestVersion])
+
+  useEffect(() => {
+    if (activeSearchCode || !mapViewport) {
+      return undefined
+    }
+
+    const cachedEntry = viewportCacheRef.current.find((entry) => viewportContains(entry.viewport, mapViewport))
+
+    if (cachedEntry) {
+      setMapFeedbackMessage('')
+      commitMapPlaces(cachedEntry.items, false)
+      return undefined
+    }
+
+    const abortController = new AbortController()
+    let cancelled = false
+
+    async function loadViewportPlaces() {
+      try {
+        setMapLoadingState('loading')
+        setMapFeedbackMessage('')
+
+        const data = await fetchViewportPlaces(mapViewport, abortController.signal)
+
+        if (cancelled) {
+          return
+        }
+
+        rememberViewportItems(mapViewport, data)
+        commitMapPlaces(data, false)
+      } catch (error) {
+        if (!cancelled && error.name !== 'AbortError') {
+          setMapLoadingState('error')
+          setMapFeedbackMessage(error.message)
+        }
+      }
+    }
+
+    void loadViewportPlaces()
 
     return () => {
       cancelled = true
@@ -269,11 +300,18 @@ function App() {
 
   function submitCodeSearch() {
     const normalizedCode = normalizeCodeQuery(searchInput)
+
+    if (!normalizedCode) {
+      resetCodeSearch()
+      return
+    }
+
     setSearchInput(normalizedCode)
-    setActiveSearchCode(normalizedCode)
     setMapFeedbackMessage('')
     setDetailFeedbackMessage('')
     setMapLoadingState('loading')
+    setActiveSearchCode(normalizedCode)
+    setSearchRequestVersion((current) => current + 1)
   }
 
   function resetCodeSearch() {
@@ -282,6 +320,11 @@ function App() {
     setMapFeedbackMessage('')
     setDetailFeedbackMessage('')
     setMapLoadingState('loading')
+    setMobileDetailVisible(false)
+    setImageViewerOpen(false)
+  }
+
+  function closeMobileDetail() {
     setMobileDetailVisible(false)
     setImageViewerOpen(false)
   }
@@ -414,7 +457,7 @@ function App() {
           placeTitle={activePlace?.title || selectedPlacePreview?.title}
           loadingState={panelLoadingState}
           feedbackMessage={feedbackMessage}
-          onClose={() => setMobileDetailVisible(false)}
+          onClose={closeMobileDetail}
           placeStoryProps={placeStoryProps}
         />
       </Suspense>
