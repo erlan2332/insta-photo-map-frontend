@@ -84,7 +84,7 @@ export default function PlaceStory({
             <img
               src={resolveMediaUrl(photo.thumbnailUrl || photo.previewUrl || photo.url)}
               alt={photo.altText}
-              loading="lazy"
+              loading="eager"
             />
           </button>
         ))}

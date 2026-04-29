@@ -394,6 +394,30 @@ function App() {
     return () => window.clearTimeout(timeoutId)
   }, [activePlace, activePhotoIndex])
 
+  useEffect(() => {
+    if (!selectedPlace?.photos?.length || selectedPlace.id !== stableSelectedPlaceId) {
+      return undefined
+    }
+
+    const preloadPhotoVariants = () => {
+      selectedPlace.photos.forEach((photo, index) => {
+        preloadImage(resolveMediaUrl(photo.thumbnailUrl || photo.previewUrl || photo.url))
+
+        if (index < 6) {
+          preloadImage(resolveMediaUrl(photo.previewUrl || photo.url))
+        }
+      })
+    }
+
+    if ('requestIdleCallback' in window) {
+      const idleId = window.requestIdleCallback(preloadPhotoVariants)
+      return () => window.cancelIdleCallback(idleId)
+    }
+
+    const timeoutId = window.setTimeout(preloadPhotoVariants, 180)
+    return () => window.clearTimeout(timeoutId)
+  }, [selectedPlace, stableSelectedPlaceId])
+
   function focusPlace(place) {
     selectPlace(place)
     focusPlaceOnMap(place)
