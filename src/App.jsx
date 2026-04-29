@@ -3,9 +3,10 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 import './App.css'
 import MapTopBar from './components/MapTopBar'
 import MobileSearchPocket from './components/MobileSearchPocket'
-import { fetchMapPlacesPage, fetchPlaceById } from './api'
+import { fetchMapPlacesPage, fetchPlaceById, resolveMediaUrl } from './api'
 import { MAPBOX_TOKEN } from './constants/map'
 import { usePlaceMap } from './hooks/usePlaceMap'
+import { preloadImage } from './utils/media'
 import { normalizeCodeQuery } from './utils/search'
 
 const PlaceDesktopPanel = lazy(() => import('./components/PlaceDesktopPanel'))
@@ -15,6 +16,7 @@ const PlaceResultsBar = lazy(() => import('./components/PlaceResultsBar'))
 const MAP_VIEW_PAGE_SIZE = 60
 const MAX_VIEWPORT_PAGE_REQUESTS = 60
 const MAX_VIEWPORT_CACHE_ENTRIES = 6
+const PLACE_DETAILS_CACHE_LIMIT = 24
 
 function toLongitudeRanges(west, east) {
   if (east >= west) {
@@ -46,6 +48,14 @@ function viewportContains(outerViewport, innerViewport) {
   ))
 }
 
+function createViewportCacheKey(viewport) {
+  if (!viewport) {
+    return ''
+  }
+
+  return [viewport.north, viewport.south, viewport.east, viewport.west].join(':')
+}
+
 async function fetchViewportPlaces(viewport, signal) {
   const items = []
   let nextPage = 0
@@ -75,6 +85,7 @@ function App() {
   const mapContainerRef = useRef(null)
   const selectedPlaceIdRef = useRef(null)
   const viewportCacheRef = useRef([])
+  const placeDetailsCacheRef = useRef(new Map())
 
   const [mapPlaces, setMapPlaces] = useState([])
   const [mapViewport, setMapViewport] = useState(null)
@@ -105,8 +116,9 @@ function App() {
   const searchMissMessage = searchMiss ? `Места с кодом ${activeSearchCode} нет` : ''
 
   function selectPlace(place) {
+    const cachedPlace = placeDetailsCacheRef.current.get(place.id) ?? null
     setSelectedPlaceId(place.id)
-    setSelectedPlace((current) => (current?.id === place.id ? current : null))
+    setSelectedPlace((current) => (current?.id === place.id ? current : cachedPlace))
     setActivePhotoIndex(0)
     setMobileDetailVisible(true)
     setImageViewerOpen(false)
@@ -147,10 +159,29 @@ function App() {
   }
 
   function rememberViewportItems(viewport, items) {
+    const viewportKey = createViewportCacheKey(viewport)
+
     viewportCacheRef.current = [
-      { viewport, items },
-      ...viewportCacheRef.current.filter((entry) => entry.viewport !== viewport),
+      { key: viewportKey, viewport, items },
+      ...viewportCacheRef.current.filter((entry) => entry.key !== viewportKey),
     ].slice(0, MAX_VIEWPORT_CACHE_ENTRIES)
+  }
+
+  function rememberPlaceDetails(place) {
+    if (!place?.id) {
+      return
+    }
+
+    const nextCache = new Map(placeDetailsCacheRef.current)
+    nextCache.delete(place.id)
+    nextCache.set(place.id, place)
+
+    while (nextCache.size > PLACE_DETAILS_CACHE_LIMIT) {
+      const oldestKey = nextCache.keys().next().value
+      nextCache.delete(oldestKey)
+    }
+
+    placeDetailsCacheRef.current = nextCache
   }
 
   useEffect(() => {
@@ -257,24 +288,37 @@ function App() {
       return
     }
 
+    const cachedPlace = placeDetailsCacheRef.current.get(stableSelectedPlaceId)
+    const abortController = new AbortController()
     let cancelled = false
+
+    if (cachedPlace) {
+      setSelectedPlace(cachedPlace)
+      setDetailLoadingState('ready')
+      setDetailFeedbackMessage('')
+      return () => {
+        cancelled = true
+        abortController.abort()
+      }
+    }
 
     async function loadPlaceDetails(placeId) {
       try {
         setDetailLoadingState('loading')
         setDetailFeedbackMessage('')
-        const data = await fetchPlaceById(placeId)
+        const data = await fetchPlaceById(placeId, { signal: abortController.signal })
 
         if (cancelled) {
           return
         }
 
+        rememberPlaceDetails(data)
         startTransition(() => {
           setSelectedPlace(data)
           setDetailLoadingState('ready')
         })
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && error.name !== 'AbortError') {
           setSelectedPlace(null)
           setDetailLoadingState('error')
           setDetailFeedbackMessage(error.message)
@@ -286,8 +330,33 @@ function App() {
 
     return () => {
       cancelled = true
+      abortController.abort()
     }
   }, [stableSelectedPlaceId])
+
+  useEffect(() => {
+    if (!activePlace?.photos?.length) {
+      return undefined
+    }
+
+    const currentIndex = Math.min(activePhotoIndex, activePlace.photos.length - 1)
+    const current = activePlace.photos[currentIndex]
+    const next = activePlace.photos[(currentIndex + 1) % activePlace.photos.length]
+    const previous = activePlace.photos[(currentIndex - 1 + activePlace.photos.length) % activePlace.photos.length]
+    const targets = [current?.url, current?.previewUrl, next?.url, previous?.url]
+
+    const preloadTargets = () => {
+      targets.forEach((url) => preloadImage(resolveMediaUrl(url)))
+    }
+
+    if ('requestIdleCallback' in window) {
+      const idleId = window.requestIdleCallback(preloadTargets)
+      return () => window.cancelIdleCallback(idleId)
+    }
+
+    const timeoutId = window.setTimeout(preloadTargets, 120)
+    return () => window.clearTimeout(timeoutId)
+  }, [activePlace, activePhotoIndex])
 
   function focusPlace(place) {
     selectPlace(place)

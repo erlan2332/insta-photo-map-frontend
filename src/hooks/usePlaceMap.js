@@ -14,6 +14,7 @@ import { createClusterMarkerImage, createMapMarkerImages } from '../utils/mapMar
 const VIEWPORT_PAD_FACTOR = 0.4
 const VIEWPORT_PRECISION = 1000
 const PLACE_CLUSTER_ICON_ID = 'place-cluster-icon'
+const MARKER_SYNC_BATCH_SIZE = 6
 
 function clampLatitude(value) {
   return Math.max(-90, Math.min(90, value))
@@ -65,6 +66,7 @@ export function usePlaceMap({
   const mapRef = useRef(null)
   const layerHandlersBoundRef = useRef(false)
   const lastViewportKeyRef = useRef('')
+  const renderedPlaceIdsRef = useRef(new Set())
   const shouldAutoFitDefaultViewRef = useRef(true)
   const previousSearchCodeRef = useRef('')
   const [mapReady, setMapReady] = useState(false)
@@ -326,6 +328,19 @@ export function usePlaceMap({
     }
 
     if (!visiblePlaces.length) {
+      renderedPlaceIdsRef.current.forEach((placeId) => {
+        const iconId = `place-icon-${placeId}`
+        const activeIconId = `place-icon-${placeId}-active`
+
+        if (map.hasImage(iconId)) {
+          map.removeImage(iconId)
+        }
+
+        if (map.hasImage(activeIconId)) {
+          map.removeImage(activeIconId)
+        }
+      })
+      renderedPlaceIdsRef.current = new Set()
       source.setData({
         type: 'FeatureCollection',
         features: [],
@@ -338,38 +353,67 @@ export function usePlaceMap({
     let cancelled = false
 
     async function syncPlaceLayer() {
-      await Promise.all(visiblePlaces.map(async (place) => {
+      const missingPlaces = visiblePlaces.filter((place) => {
         const iconId = `place-icon-${place.id}`
         const activeIconId = `place-icon-${place.id}-active`
+        return !map.hasImage(iconId) || !map.hasImage(activeIconId)
+      })
 
-        if (map.hasImage(iconId) && map.hasImage(activeIconId)) {
+      for (let index = 0; index < missingPlaces.length; index += MARKER_SYNC_BATCH_SIZE) {
+        const batch = missingPlaces.slice(index, index + MARKER_SYNC_BATCH_SIZE)
+
+        await Promise.all(batch.map(async (place) => {
+          const iconId = `place-icon-${place.id}`
+          const activeIconId = `place-icon-${place.id}-active`
+          const coverPhotoUrl = resolveMediaUrl(place.coverPhotoUrl)
+          const markerImages = await createMapMarkerImages(coverPhotoUrl)
+
+          if (cancelled || !markerImages) {
+            return
+          }
+
+          if (markerImages.normal && !map.hasImage(iconId)) {
+            map.addImage(iconId, markerImages.normal.image, {
+              pixelRatio: markerImages.normal.pixelRatio,
+            })
+          }
+
+          if (markerImages.active && !map.hasImage(activeIconId)) {
+            map.addImage(activeIconId, markerImages.active.image, {
+              pixelRatio: markerImages.active.pixelRatio,
+            })
+          }
+        }))
+
+        if (cancelled) {
           return
         }
-
-        const coverPhotoUrl = resolveMediaUrl(place.coverPhotoUrl)
-        const markerImages = await createMapMarkerImages(coverPhotoUrl)
-
-        if (cancelled || !markerImages) {
-          return
-        }
-
-        if (markerImages.normal && !map.hasImage(iconId)) {
-          map.addImage(iconId, markerImages.normal.image, {
-            pixelRatio: markerImages.normal.pixelRatio,
-          })
-        }
-
-        if (markerImages.active && !map.hasImage(activeIconId)) {
-          map.addImage(activeIconId, markerImages.active.image, {
-            pixelRatio: markerImages.active.pixelRatio,
-          })
-        }
-      }))
+      }
 
       if (cancelled) {
         return
       }
 
+      const nextPlaceIds = new Set(visiblePlaces.map((place) => place.id))
+
+      renderedPlaceIdsRef.current.forEach((placeId) => {
+        if (nextPlaceIds.has(placeId)) {
+          return
+        }
+
+        const iconId = `place-icon-${placeId}`
+        const activeIconId = `place-icon-${placeId}-active`
+
+        if (map.hasImage(iconId)) {
+          map.removeImage(iconId)
+        }
+
+        if (map.hasImage(activeIconId)) {
+          map.removeImage(activeIconId)
+        }
+      })
+
+      renderedPlaceIdsRef.current = nextPlaceIds
       source.setData(nextData)
     }
 

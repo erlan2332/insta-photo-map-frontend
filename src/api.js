@@ -63,8 +63,8 @@ export async function fetchMapPlacesPage({
   return response.json()
 }
 
-export async function fetchPlaceById(id) {
-  const response = await fetch(`${API_BASE}/places/${id}`)
+export async function fetchPlaceById(id, { signal } = {}) {
+  const response = await fetch(`${API_BASE}/places/${id}`, { signal })
 
   if (!response.ok) {
     throw new Error(await readErrorMessage(response))

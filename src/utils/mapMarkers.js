@@ -12,8 +12,35 @@ function roundedRect(context, x, y, width, height, radius) {
   context.closePath()
 }
 
+const externalImageCache = new Map()
+const markerImagesCache = new Map()
+let clusterMarkerImageCache = null
+const MARKER_CACHE_LIMIT = 180
+
+function rememberCacheEntry(cache, key, value) {
+  if (cache.has(key)) {
+    cache.delete(key)
+  }
+
+  cache.set(key, value)
+
+  while (cache.size > MARKER_CACHE_LIMIT) {
+    const oldestKey = cache.keys().next().value
+    cache.delete(oldestKey)
+  }
+}
+
 function loadExternalImage(url) {
-  return new Promise((resolve) => {
+  if (!url) {
+    return Promise.resolve(null)
+  }
+
+  const cachedPromise = externalImageCache.get(url)
+  if (cachedPromise) {
+    return cachedPromise
+  }
+
+  const imagePromise = new Promise((resolve) => {
     const image = new Image()
 
     image.crossOrigin = 'anonymous'
@@ -22,6 +49,9 @@ function loadExternalImage(url) {
     image.onerror = () => resolve(null)
     image.src = url
   })
+
+  rememberCacheEntry(externalImageCache, url, imagePromise)
+  return imagePromise
 }
 
 function renderMapMarkerImage(image, active) {
@@ -248,14 +278,26 @@ function renderClusterMarkerImage() {
 }
 
 export async function createMapMarkerImages(url) {
-  const image = await loadExternalImage(url)
+  const cacheKey = url || '__empty__'
+  const cachedPromise = markerImagesCache.get(cacheKey)
 
-  return {
+  if (cachedPromise) {
+    return cachedPromise
+  }
+
+  const markerPromise = loadExternalImage(url).then((image) => ({
     normal: renderMapMarkerImage(image, false),
     active: renderMapMarkerImage(image, true),
-  }
+  }))
+
+  rememberCacheEntry(markerImagesCache, cacheKey, markerPromise)
+  return markerPromise
 }
 
 export function createClusterMarkerImage() {
-  return renderClusterMarkerImage()
+  if (!clusterMarkerImageCache) {
+    clusterMarkerImageCache = renderClusterMarkerImage()
+  }
+
+  return clusterMarkerImageCache
 }
