@@ -1,6 +1,7 @@
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, X, ZoomIn } from 'lucide-react'
 import { resolveMediaUrl } from '../api'
+import { hasPreloadedImage, preloadImage } from '../utils/media'
 
 export default function ImageViewer({
   open,
@@ -13,12 +14,32 @@ export default function ImageViewer({
   onNextPhoto,
 }) {
   const touchStartRef = useRef(null)
+  const multiplePhotos = photosCount > 1
+  const originalSrc = resolveMediaUrl(currentPhoto?.url)
+  const previewSrc = resolveMediaUrl(currentPhoto?.previewUrl || currentPhoto?.thumbnailUrl || currentPhoto?.url)
+  const [loadedOriginalSrc, setLoadedOriginalSrc] = useState('')
+  const immediateDisplaySrc = hasPreloadedImage(originalSrc) ? originalSrc : (previewSrc || originalSrc)
+  const resolvedDisplaySrc = loadedOriginalSrc === originalSrc ? originalSrc : immediateDisplaySrc
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (open && currentPhoto && originalSrc && !hasPreloadedImage(originalSrc)) {
+      void preloadImage(originalSrc).then((loaded) => {
+        if (!cancelled && loaded) {
+          setLoadedOriginalSrc(originalSrc)
+        }
+      })
+    }
+
+    return () => {
+      cancelled = true
+    }
+  }, [open, currentPhoto, originalSrc])
 
   if (!open || !currentPhoto) {
     return null
   }
-
-  const multiplePhotos = photosCount > 1
 
   function handleTouchStart(event) {
     if (!multiplePhotos) {
@@ -103,9 +124,11 @@ export default function ImageViewer({
 
             <figure className="image-viewer__figure">
               <img
-                src={resolveMediaUrl(currentPhoto.url)}
+                key={originalSrc}
+                src={resolvedDisplaySrc || originalSrc}
                 alt={currentPhoto.altText || placeTitle}
                 fetchPriority="high"
+                decoding="async"
               />
             </figure>
 
