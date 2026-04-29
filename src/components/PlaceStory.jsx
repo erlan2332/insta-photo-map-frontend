@@ -1,6 +1,45 @@
+import { useEffect, useState } from 'react'
 import { ArrowLeft, ArrowRight, Camera, ExternalLink, ZoomIn } from 'lucide-react'
 import { resolveMediaUrl } from '../api'
+import { hasPreloadedImage, preloadImage } from '../utils/media'
 import { formatDate } from '../utils/formatters'
+
+function StoryCoverImage({ currentPhoto, place }) {
+  const previewSrc = resolveMediaUrl(currentPhoto?.previewUrl || currentPhoto?.url || place.coverPhotoUrl)
+  const placeholderSrc = resolveMediaUrl(
+    currentPhoto?.thumbnailUrl || currentPhoto?.previewUrl || currentPhoto?.url || place.coverPhotoUrl,
+  )
+  const initialDisplaySrc = hasPreloadedImage(previewSrc) ? previewSrc : (placeholderSrc || previewSrc)
+  const [displaySrc, setDisplaySrc] = useState(() => (
+    hasPreloadedImage(previewSrc) ? previewSrc : (placeholderSrc || previewSrc)
+  ))
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (previewSrc && previewSrc !== initialDisplaySrc) {
+      void preloadImage(previewSrc).then((loaded) => {
+        if (!cancelled && loaded) {
+          setDisplaySrc(previewSrc)
+        }
+      })
+    }
+
+    return () => {
+      cancelled = true
+    }
+  }, [initialDisplaySrc, previewSrc])
+
+  return (
+    <img
+      key={previewSrc}
+      src={displaySrc || previewSrc}
+      alt={currentPhoto?.altText || place.title}
+      fetchPriority="high"
+      decoding="async"
+    />
+  )
+}
 
 export default function PlaceStory({
   place,
@@ -21,18 +60,15 @@ export default function PlaceStory({
     )
   }
 
-  const coverSrc = resolveMediaUrl(currentPhoto?.previewUrl || currentPhoto?.url || place.coverPhotoUrl)
-
   return (
     <div className="story-card">
       <div className="story-cover">
         <div className="story-cover__frame">
           <div className="story-cover__media">
-            <img
-              key={coverSrc}
-              src={coverSrc}
-              alt={currentPhoto?.altText || place.title}
-              fetchPriority="high"
+            <StoryCoverImage
+              key={resolveMediaUrl(currentPhoto?.previewUrl || currentPhoto?.url || place.coverPhotoUrl)}
+              currentPhoto={currentPhoto}
+              place={place}
             />
             <button
               type="button"
@@ -88,6 +124,8 @@ export default function PlaceStory({
               src={resolveMediaUrl(photo.thumbnailUrl || photo.previewUrl || photo.url)}
               alt={photo.altText}
               loading="eager"
+              decoding="async"
+              fetchPriority={index < 4 ? 'high' : 'auto'}
             />
           </button>
         ))}

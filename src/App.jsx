@@ -17,6 +17,7 @@ const MAP_VIEW_PAGE_SIZE = 60
 const MAX_VIEWPORT_PAGE_REQUESTS = 60
 const MAX_VIEWPORT_CACHE_ENTRIES = 6
 const PLACE_DETAILS_CACHE_LIMIT = 24
+const PLACE_CARD_PREVIEW_PRELOAD_LIMIT = 12
 
 function createPreviewPlace(place) {
   if (!place) {
@@ -108,6 +109,20 @@ async function fetchViewportPlaces(viewport, signal) {
   }
 
   return items
+}
+
+function warmPlacePhotoVariants(place) {
+  if (!place?.photos?.length) {
+    return
+  }
+
+  place.photos.forEach((photo) => {
+    preloadImage(resolveMediaUrl(photo.thumbnailUrl || photo.previewUrl || photo.url))
+  })
+
+  place.photos.slice(0, PLACE_CARD_PREVIEW_PRELOAD_LIMIT).forEach((photo) => {
+    preloadImage(resolveMediaUrl(photo.previewUrl || photo.url))
+  })
 }
 
 function App() {
@@ -329,6 +344,7 @@ function App() {
     let cancelled = false
 
     if (cachedPlace) {
+      warmPlacePhotoVariants(cachedPlace)
       setSelectedPlace(cachedPlace)
       setDetailLoadingState('ready')
       setDetailFeedbackMessage('')
@@ -349,6 +365,7 @@ function App() {
         }
 
         rememberPlaceDetails(data)
+        warmPlacePhotoVariants(data)
         startTransition(() => {
           setSelectedPlace(data)
           setDetailLoadingState('ready')
@@ -398,6 +415,8 @@ function App() {
     if (!selectedPlace?.photos?.length || selectedPlace.id !== stableSelectedPlaceId) {
       return undefined
     }
+
+    warmPlacePhotoVariants(selectedPlace)
 
     const preloadPhotoVariants = () => {
       selectedPlace.photos.forEach((photo, index) => {
