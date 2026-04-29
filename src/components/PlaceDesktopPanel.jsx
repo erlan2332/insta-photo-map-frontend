@@ -7,7 +7,7 @@ export default function PlaceDesktopPanel({ loadingState, feedbackMessage, place
       {loadingState === 'loading' ? (
         <div className="floating-panel floating-panel--state">
           <LoaderCircle size={18} className="spin" />
-          <p>Загрузка мест...</p>
+          <p>Загрузка...</p>
         </div>
       ) : loadingState === 'error' ? (
         <div className="floating-panel floating-panel--state is-error">

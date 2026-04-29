@@ -24,8 +24,7 @@ function loadExternalImage(url) {
   })
 }
 
-export async function createMapMarkerImage(url, active) {
-  const image = await loadExternalImage(url)
+function renderMapMarkerImage(image, active) {
   const pixelRatio = 2
   const width = 48 * pixelRatio
   const height = 66 * pixelRatio
@@ -153,4 +152,110 @@ export async function createMapMarkerImage(url, active) {
     image: context.getImageData(0, 0, width, height),
     pixelRatio,
   }
+}
+
+function renderClusterMarkerImage() {
+  const pixelRatio = 2
+  const width = 48 * pixelRatio
+  const height = 66 * pixelRatio
+  const thumbSize = 40 * pixelRatio
+  const thumbX = (width - thumbSize) / 2
+  const thumbY = 3 * pixelRatio
+  const pointerSize = 11 * pixelRatio
+
+  const canvas = document.createElement('canvas')
+  const context = canvas.getContext('2d')
+
+  canvas.width = width
+  canvas.height = height
+
+  if (!context) {
+    return null
+  }
+
+  context.clearRect(0, 0, width, height)
+
+  context.save()
+  context.shadowColor = 'rgba(8, 13, 18, 0.3)'
+  context.shadowBlur = 14 * pixelRatio
+  context.shadowOffsetY = 9 * pixelRatio
+  roundedRect(context, thumbX, thumbY, thumbSize, thumbSize, 14 * pixelRatio)
+  context.fillStyle = '#ffffff'
+  context.fill()
+  context.restore()
+
+  roundedRect(context, thumbX, thumbY, thumbSize, thumbSize, 14 * pixelRatio)
+  context.fillStyle = '#ffffff'
+  context.fill()
+
+  context.save()
+  roundedRect(
+    context,
+    thumbX + 2 * pixelRatio,
+    thumbY + 2 * pixelRatio,
+    thumbSize - 4 * pixelRatio,
+    thumbSize - 4 * pixelRatio,
+    12 * pixelRatio,
+  )
+  context.clip()
+
+  const innerGradient = context.createLinearGradient(thumbX, thumbY, thumbX + thumbSize, thumbY + thumbSize)
+  innerGradient.addColorStop(0, '#265d8f')
+  innerGradient.addColorStop(0.5, '#236f74')
+  innerGradient.addColorStop(1, '#1f7a4d')
+  context.fillStyle = innerGradient
+  context.fillRect(
+    thumbX + 2 * pixelRatio,
+    thumbY + 2 * pixelRatio,
+    thumbSize - 4 * pixelRatio,
+    thumbSize - 4 * pixelRatio,
+  )
+
+  const overlayGradient = context.createLinearGradient(0, thumbY + 2 * pixelRatio, 0, thumbY + thumbSize)
+  overlayGradient.addColorStop(0, 'rgba(255, 255, 255, 0.18)')
+  overlayGradient.addColorStop(0.45, 'rgba(255, 255, 255, 0)')
+  overlayGradient.addColorStop(1, 'rgba(8, 13, 18, 0.14)')
+  context.fillStyle = overlayGradient
+  context.fillRect(
+    thumbX + 2 * pixelRatio,
+    thumbY + 2 * pixelRatio,
+    thumbSize - 4 * pixelRatio,
+    thumbSize - 4 * pixelRatio,
+  )
+  context.restore()
+
+  context.save()
+  context.translate(width / 2, height - 13 * pixelRatio)
+  context.rotate(Math.PI / 4)
+  context.fillStyle = '#ffffff'
+  context.fillRect(-pointerSize / 2, -pointerSize / 2, pointerSize, pointerSize)
+  context.restore()
+
+  context.beginPath()
+  context.arc(width / 2, height - 11 * pixelRatio, 5.5 * pixelRatio, 0, Math.PI * 2)
+  context.fillStyle = '#236f74'
+  context.fill()
+
+  context.beginPath()
+  context.arc(width / 2, height - 11 * pixelRatio, 2 * pixelRatio, 0, Math.PI * 2)
+  context.fillStyle = '#ffffff'
+  context.fill()
+
+  return {
+    image: context.getImageData(0, 0, width, height),
+    pixelRatio,
+  }
+}
+
+export async function createMapMarkerImages(url) {
+  const image = await loadExternalImage(url)
+
+  return {
+    normal: renderMapMarkerImage(image, false),
+    active: renderMapMarkerImage(image, true),
+  }
+}
+
+export function createClusterMarkerImage() {
+  return renderClusterMarkerImage()
 }

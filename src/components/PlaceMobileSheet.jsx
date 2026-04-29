@@ -27,7 +27,7 @@ export default function PlaceMobileSheet({
         {loadingState === 'loading' ? (
           <div className="panel-empty">
             <LoaderCircle size={18} className="spin" />
-            <p>Загрузка мест...</p>
+            <p>Загрузка...</p>
           </div>
         ) : loadingState === 'error' ? (
           <div className="panel-empty">

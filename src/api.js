@@ -30,6 +30,39 @@ export async function fetchMapPlaces(code = '') {
   return response.json()
 }
 
+export async function fetchMapPlacesPage({
+  north,
+  south,
+  east,
+  west,
+  page = 0,
+  size = 60,
+  code = '',
+  signal,
+}) {
+  const params = new URLSearchParams()
+
+  if (code) {
+    params.set('code', code)
+  } else {
+    params.set('north', String(north))
+    params.set('south', String(south))
+    params.set('east', String(east))
+    params.set('west', String(west))
+  }
+
+  params.set('page', String(page))
+  params.set('size', String(size))
+
+  const response = await fetch(`${API_BASE}/places/map-window?${params.toString()}`, { signal })
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response))
+  }
+
+  return response.json()
+}
+
 export async function fetchPlaceById(id) {
   const response = await fetch(`${API_BASE}/places/${id}`)
 

@@ -25,20 +25,26 @@ export default function PlaceStory({
     <div className="story-card">
       <div className="story-cover">
         <div className="story-cover__frame">
-          <img
-            src={resolveMediaUrl(currentPhoto?.url || place.coverPhotoUrl)}
-            alt={currentPhoto?.altText || place.title}
-          />
-          <button
-            type="button"
-            className="story-cover__zoom"
-            onClick={onOpenImage}
-            aria-label="Открыть фото крупно"
-          >
-            <ZoomIn size={16} />
-          </button>
-          <div className="story-cover__meta">
-            <span>{place.city}</span>
+          <div className="story-cover__media">
+            <img
+              src={resolveMediaUrl(currentPhoto?.previewUrl || currentPhoto?.url || place.coverPhotoUrl)}
+              alt={currentPhoto?.altText || place.title}
+              fetchPriority="high"
+            />
+            <button
+              type="button"
+              className="story-cover__zoom"
+              onClick={onOpenImage}
+              aria-label="Открыть фото крупно"
+            >
+              <ZoomIn size={16} />
+            </button>
+            <div className="story-cover__meta">
+              <strong className="story-cover__city">{place.city}</strong>
+              {place.createdAt ? (
+                <p className="story-cover__date">Добавлено {formatDate(place.createdAt)}</p>
+              ) : null}
+            </div>
           </div>
         </div>
       </div>
@@ -55,7 +61,6 @@ export default function PlaceStory({
 
         <div className="story-toolbar__stats">
           <strong>Код {place.placeCode}</strong>
-          <span>Добавлено {formatDate(place.createdAt)}</span>
         </div>
 
         <button
@@ -76,7 +81,11 @@ export default function PlaceStory({
             className={`story-thumb${index === activePhotoIndex ? ' is-active' : ''}`}
             onClick={() => onPhotoSelect(index)}
           >
-            <img src={resolveMediaUrl(photo.url)} alt={photo.altText} />
+            <img
+              src={resolveMediaUrl(photo.thumbnailUrl || photo.previewUrl || photo.url)}
+              alt={photo.altText}
+              loading="lazy"
+            />
           </button>
         ))}
       </div>

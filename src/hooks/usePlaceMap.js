@@ -1,14 +1,58 @@
 import { useEffect, useEffectEvent, useRef, useState } from 'react'
-import mapboxgl from 'mapbox-gl'
 import { resolveMediaUrl } from '../api'
 import {
   DEFAULT_CENTER,
   DEFAULT_ZOOM,
   MAPBOX_TOKEN,
+  PLACE_CLUSTER_LAYER_ID,
+  PLACE_CLUSTER_MAX_ZOOM,
   PLACE_LAYER_ID,
   PLACE_SOURCE_ID,
 } from '../constants/map'
-import { createMapMarkerImage } from '../utils/mapMarkers'
+import { createClusterMarkerImage, createMapMarkerImages } from '../utils/mapMarkers'
+
+const VIEWPORT_PAD_FACTOR = 0.4
+const VIEWPORT_PRECISION = 1000
+const PLACE_CLUSTER_ICON_ID = 'place-cluster-icon'
+
+function clampLatitude(value) {
+  return Math.max(-90, Math.min(90, value))
+}
+
+function wrapLongitude(value) {
+  let wrappedValue = value
+
+  while (wrappedValue > 180) {
+    wrappedValue -= 360
+  }
+
+  while (wrappedValue < -180) {
+    wrappedValue += 360
+  }
+
+  return wrappedValue
+}
+
+function roundCoordinate(value) {
+  return Math.round(value * VIEWPORT_PRECISION) / VIEWPORT_PRECISION
+}
+
+function createViewportSnapshot(map) {
+  const bounds = map.getBounds()
+  const north = bounds.getNorth()
+  const south = bounds.getSouth()
+  const east = bounds.getEast()
+  const west = bounds.getWest()
+  const latitudePadding = (north - south) * VIEWPORT_PAD_FACTOR
+  const longitudePadding = (east - west) * VIEWPORT_PAD_FACTOR
+
+  return {
+    north: roundCoordinate(clampLatitude(north + latitudePadding)),
+    south: roundCoordinate(clampLatitude(south - latitudePadding)),
+    east: roundCoordinate(wrapLongitude(east + longitudePadding)),
+    west: roundCoordinate(wrapLongitude(west - longitudePadding)),
+  }
+}
 
 export function usePlaceMap({
   mapContainerRef,
@@ -16,10 +60,13 @@ export function usePlaceMap({
   selectedPlaceId,
   activeSearchCode,
   onPlaceSelect,
+  onViewportChange,
 }) {
   const mapRef = useRef(null)
-  const initialViewportAppliedRef = useRef(false)
   const layerHandlersBoundRef = useRef(false)
+  const lastViewportKeyRef = useRef('')
+  const shouldAutoFitDefaultViewRef = useRef(true)
+  const previousSearchCodeRef = useRef('')
   const [mapReady, setMapReady] = useState(false)
 
   const handlePlaceSelect = useEffectEvent((placeId) => {
@@ -30,45 +77,82 @@ export function usePlaceMap({
     }
   })
 
+  const reportViewportChange = useEffectEvent(() => {
+    if (!mapRef.current || !onViewportChange) {
+      return
+    }
+
+    const nextViewport = createViewportSnapshot(mapRef.current)
+    const nextViewportKey = [
+      nextViewport.north,
+      nextViewport.south,
+      nextViewport.east,
+      nextViewport.west,
+    ].join(':')
+
+    if (lastViewportKeyRef.current === nextViewportKey) {
+      return
+    }
+
+    lastViewportKeyRef.current = nextViewportKey
+    onViewportChange(nextViewport)
+  })
+
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current || !MAPBOX_TOKEN) {
       return
     }
 
-    mapboxgl.accessToken = MAPBOX_TOKEN
+    let cancelled = false
 
-    const map = new mapboxgl.Map({
-      container: mapContainerRef.current,
-      style: 'mapbox://styles/mapbox/standard',
-      center: DEFAULT_CENTER,
-      zoom: DEFAULT_ZOOM,
-      pitch: 14,
-      bearing: -10,
-      antialias: true,
-      attributionControl: false,
-    })
+    async function initMap() {
+      const mapboxModule = await import('mapbox-gl')
+      const mapboxgl = mapboxModule.default
 
-    map.addControl(
-      new mapboxgl.NavigationControl({ visualizePitch: false, showCompass: false }),
-      'top-right',
-    )
-    map.addControl(new mapboxgl.AttributionControl({ compact: false }), 'top-left')
-    map.on('load', () => {
-      map.setFog({
-        range: [-0.35, 1.6],
-        color: '#f2ede3',
-        'high-color': '#23485f',
-        'space-color': '#071018',
-        'horizon-blend': 0.08,
-        'star-intensity': 0,
+      if (cancelled || !mapContainerRef.current || mapRef.current) {
+        return
+      }
+
+      mapboxgl.accessToken = MAPBOX_TOKEN
+
+      const map = new mapboxgl.Map({
+        container: mapContainerRef.current,
+        style: 'mapbox://styles/mapbox/standard',
+        center: DEFAULT_CENTER,
+        zoom: DEFAULT_ZOOM,
+        pitch: 14,
+        bearing: -10,
+        antialias: true,
+        attributionControl: false,
       })
-      setMapReady(true)
-    })
 
-    mapRef.current = map
+      map.addControl(
+        new mapboxgl.NavigationControl({ visualizePitch: false, showCompass: false }),
+        'top-right',
+      )
+      map.addControl(new mapboxgl.AttributionControl({ compact: false }), 'top-left')
+      map.on('load', () => {
+        map.setFog({
+          range: [-0.35, 1.6],
+          color: '#f2ede3',
+          'high-color': '#23485f',
+          'space-color': '#071018',
+          'horizon-blend': 0.08,
+          'star-intensity': 0,
+        })
+        setMapReady(true)
+        reportViewportChange()
+      })
+      map.on('moveend', reportViewportChange)
+
+      mapRef.current = map
+    }
+
+    void initMap()
 
     return () => {
-      map.remove()
+      cancelled = true
+      mapRef.current?.remove()
       mapRef.current = null
     }
   }, [mapContainerRef])
@@ -83,9 +167,61 @@ export function usePlaceMap({
     if (!map.getSource(PLACE_SOURCE_ID)) {
       map.addSource(PLACE_SOURCE_ID, {
         type: 'geojson',
+        cluster: true,
+        clusterMaxZoom: PLACE_CLUSTER_MAX_ZOOM,
+        clusterRadius: 60,
         data: {
           type: 'FeatureCollection',
           features: [],
+        },
+      })
+    }
+
+    if (!map.hasImage(PLACE_CLUSTER_ICON_ID)) {
+      const clusterMarkerImage = createClusterMarkerImage()
+
+      if (clusterMarkerImage) {
+        map.addImage(PLACE_CLUSTER_ICON_ID, clusterMarkerImage.image, {
+          pixelRatio: clusterMarkerImage.pixelRatio,
+        })
+      }
+    }
+
+    if (!map.getLayer(PLACE_CLUSTER_LAYER_ID)) {
+      map.addLayer({
+        id: PLACE_CLUSTER_LAYER_ID,
+        type: 'symbol',
+        source: PLACE_SOURCE_ID,
+        filter: ['has', 'point_count'],
+        layout: {
+          'icon-image': PLACE_CLUSTER_ICON_ID,
+          'icon-anchor': 'bottom',
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+          'text-field': ['get', 'point_count_abbreviated'],
+          'text-font': ['DIN Offc Pro Bold', 'Arial Unicode MS Bold'],
+          'text-size': [
+            'step',
+            ['get', 'point_count'],
+            15,
+            10,
+            17,
+            20,
+            18,
+            100,
+            16,
+          ],
+          'text-anchor': 'center',
+          'text-justify': 'center',
+          'text-allow-overlap': true,
+          'text-ignore-placement': true,
+        },
+        paint: {
+          'text-color': '#ffffff',
+          'text-halo-color': 'rgba(8, 13, 18, 0.22)',
+          'text-halo-width': 1,
+          'text-translate': [0, -42],
+          'text-translate-anchor': 'viewport',
         },
       })
     }
@@ -95,6 +231,7 @@ export function usePlaceMap({
         id: PLACE_LAYER_ID,
         type: 'symbol',
         source: PLACE_SOURCE_ID,
+        filter: ['!', ['has', 'point_count']],
         layout: {
           'icon-image': ['get', 'iconId'],
           'icon-anchor': 'bottom',
@@ -105,6 +242,32 @@ export function usePlaceMap({
     }
 
     if (!layerHandlersBoundRef.current) {
+      map.on('click', PLACE_CLUSTER_LAYER_ID, (event) => {
+        const feature = event.features?.[0]
+        const clusterId = Number(feature?.properties?.cluster_id)
+        const source = map.getSource(PLACE_SOURCE_ID)
+
+        if (
+          Number.isNaN(clusterId)
+          || !source
+          || typeof source.getClusterExpansionZoom !== 'function'
+        ) {
+          return
+        }
+
+        source.getClusterExpansionZoom(clusterId, (error, zoom) => {
+          if (error || !feature.geometry || feature.geometry.type !== 'Point') {
+            return
+          }
+
+          map.easeTo({
+            center: feature.geometry.coordinates,
+            zoom: Math.max(zoom, 8.1),
+            duration: 650,
+          })
+        })
+      })
+
       map.on('click', PLACE_LAYER_ID, (event) => {
         const feature = event.features?.[0]
         const placeId = Number(feature?.properties?.id)
@@ -118,7 +281,15 @@ export function usePlaceMap({
         map.getCanvas().style.cursor = 'pointer'
       })
 
+      map.on('mouseenter', PLACE_CLUSTER_LAYER_ID, () => {
+        map.getCanvas().style.cursor = 'pointer'
+      })
+
       map.on('mouseleave', PLACE_LAYER_ID, () => {
+        map.getCanvas().style.cursor = ''
+      })
+
+      map.on('mouseleave', PLACE_CLUSTER_LAYER_ID, () => {
         map.getCanvas().style.cursor = ''
       })
 
@@ -138,6 +309,22 @@ export function usePlaceMap({
       return
     }
 
+    const nextData = {
+      type: 'FeatureCollection',
+      features: visiblePlaces.map((place) => ({
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [place.longitude, place.latitude],
+        },
+        properties: {
+          id: place.id,
+          iconId: `place-icon-${place.id}`,
+          activeIconId: `place-icon-${place.id}-active`,
+        },
+      })),
+    }
+
     if (!visiblePlaces.length) {
       source.setData({
         type: 'FeatureCollection',
@@ -146,58 +333,44 @@ export function usePlaceMap({
       return
     }
 
+    source.setData(nextData)
+
     let cancelled = false
 
     async function syncPlaceLayer() {
-      for (const place of visiblePlaces) {
+      await Promise.all(visiblePlaces.map(async (place) => {
         const iconId = `place-icon-${place.id}`
         const activeIconId = `place-icon-${place.id}-active`
+
+        if (map.hasImage(iconId) && map.hasImage(activeIconId)) {
+          return
+        }
+
         const coverPhotoUrl = resolveMediaUrl(place.coverPhotoUrl)
+        const markerImages = await createMapMarkerImages(coverPhotoUrl)
 
-        if (!map.hasImage(iconId)) {
-          const normalMarkerImage = await createMapMarkerImage(coverPhotoUrl, false)
-
-          if (cancelled) {
-            return
-          }
-
-          if (normalMarkerImage && !map.hasImage(iconId)) {
-            map.addImage(iconId, normalMarkerImage.image, {
-              pixelRatio: normalMarkerImage.pixelRatio,
-            })
-          }
+        if (cancelled || !markerImages) {
+          return
         }
 
-        if (!map.hasImage(activeIconId)) {
-          const activeMarkerImage = await createMapMarkerImage(coverPhotoUrl, true)
-
-          if (cancelled) {
-            return
-          }
-
-          if (activeMarkerImage && !map.hasImage(activeIconId)) {
-            map.addImage(activeIconId, activeMarkerImage.image, {
-              pixelRatio: activeMarkerImage.pixelRatio,
-            })
-          }
+        if (markerImages.normal && !map.hasImage(iconId)) {
+          map.addImage(iconId, markerImages.normal.image, {
+            pixelRatio: markerImages.normal.pixelRatio,
+          })
         }
+
+        if (markerImages.active && !map.hasImage(activeIconId)) {
+          map.addImage(activeIconId, markerImages.active.image, {
+            pixelRatio: markerImages.active.pixelRatio,
+          })
+        }
+      }))
+
+      if (cancelled) {
+        return
       }
 
-      source.setData({
-        type: 'FeatureCollection',
-        features: visiblePlaces.map((place) => ({
-          type: 'Feature',
-          geometry: {
-            type: 'Point',
-            coordinates: [place.longitude, place.latitude],
-          },
-          properties: {
-            id: place.id,
-            iconId: `place-icon-${place.id}`,
-            activeIconId: `place-icon-${place.id}-active`,
-          },
-        })),
-      })
+      source.setData(nextData)
     }
 
     syncPlaceLayer()
@@ -206,6 +379,14 @@ export function usePlaceMap({
       cancelled = true
     }
   }, [mapReady, visiblePlaces])
+
+  useEffect(() => {
+    if (previousSearchCodeRef.current && !activeSearchCode) {
+      shouldAutoFitDefaultViewRef.current = true
+    }
+
+    previousSearchCodeRef.current = activeSearchCode
+  }, [activeSearchCode])
 
   useEffect(() => {
     if (!mapReady || !mapRef.current || !mapRef.current.getLayer(PLACE_LAYER_ID)) {
@@ -225,19 +406,30 @@ export function usePlaceMap({
       return
     }
 
-    const bounds = new mapboxgl.LngLatBounds()
+    if (!activeSearchCode && !shouldAutoFitDefaultViewRef.current) {
+      return
+    }
 
-    visiblePlaces.forEach((place) => {
-      bounds.extend([place.longitude, place.latitude])
+    const bounds = visiblePlaces.reduce((currentBounds, place) => ({
+      minLng: Math.min(currentBounds.minLng, place.longitude),
+      minLat: Math.min(currentBounds.minLat, place.latitude),
+      maxLng: Math.max(currentBounds.maxLng, place.longitude),
+      maxLat: Math.max(currentBounds.maxLat, place.latitude),
+    }), {
+      minLng: Infinity,
+      minLat: Infinity,
+      maxLng: -Infinity,
+      maxLat: -Infinity,
     })
 
-    if (!initialViewportAppliedRef.current || activeSearchCode) {
-      mapRef.current.fitBounds(bounds, {
-        padding: 120,
-        maxZoom: visiblePlaces.length === 1 ? 10.5 : 7.8,
-        duration: 900,
-      })
-      initialViewportAppliedRef.current = true
+    mapRef.current.fitBounds([[bounds.minLng, bounds.minLat], [bounds.maxLng, bounds.maxLat]], {
+      padding: 120,
+      maxZoom: visiblePlaces.length === 1 ? 10.5 : 7.8,
+      duration: 900,
+    })
+
+    if (!activeSearchCode) {
+      shouldAutoFitDefaultViewRef.current = false
     }
   }, [visiblePlaces, activeSearchCode])
 

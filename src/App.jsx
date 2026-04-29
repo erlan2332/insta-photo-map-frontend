@@ -1,22 +1,83 @@
-import { startTransition, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, startTransition, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import './App.css'
 import MapTopBar from './components/MapTopBar'
 import MobileSearchPocket from './components/MobileSearchPocket'
-import PlaceDesktopPanel from './components/PlaceDesktopPanel'
-import ImageViewer from './components/ImageViewer'
-import PlaceMobileSheet from './components/PlaceMobileSheet'
-import PlaceResultsBar from './components/PlaceResultsBar'
-import { fetchMapPlaces, fetchPlaceById } from './api'
+import { fetchMapPlacesPage, fetchPlaceById } from './api'
 import { MAPBOX_TOKEN } from './constants/map'
 import { usePlaceMap } from './hooks/usePlaceMap'
 import { normalizeCodeQuery } from './utils/search'
 
+const PlaceDesktopPanel = lazy(() => import('./components/PlaceDesktopPanel'))
+const ImageViewer = lazy(() => import('./components/ImageViewer'))
+const PlaceMobileSheet = lazy(() => import('./components/PlaceMobileSheet'))
+const PlaceResultsBar = lazy(() => import('./components/PlaceResultsBar'))
+const MAP_VIEW_PAGE_SIZE = 60
+const MAX_VIEWPORT_PAGE_REQUESTS = 60
+const MAX_VIEWPORT_CACHE_ENTRIES = 6
+
+function toLongitudeRanges(west, east) {
+  if (east >= west) {
+    return [{ start: west, end: east }]
+  }
+
+  return [
+    { start: west, end: 180 },
+    { start: -180, end: east },
+  ]
+}
+
+function viewportContains(outerViewport, innerViewport) {
+  if (!outerViewport || !innerViewport) {
+    return false
+  }
+
+  if (innerViewport.north > outerViewport.north || innerViewport.south < outerViewport.south) {
+    return false
+  }
+
+  const outerRanges = toLongitudeRanges(outerViewport.west, outerViewport.east)
+  const innerRanges = toLongitudeRanges(innerViewport.west, innerViewport.east)
+
+  return innerRanges.every((innerRange) => (
+    outerRanges.some((outerRange) => (
+      innerRange.start >= outerRange.start && innerRange.end <= outerRange.end
+    ))
+  ))
+}
+
+async function fetchViewportPlaces(viewport, signal) {
+  const items = []
+  let nextPage = 0
+  let hasNext = true
+
+  while (hasNext) {
+    if (nextPage >= MAX_VIEWPORT_PAGE_REQUESTS) {
+      throw new Error('Слишком много точек в этом масштабе. Приблизь карту.')
+    }
+
+    const response = await fetchMapPlacesPage({
+      ...viewport,
+      page: nextPage,
+      size: MAP_VIEW_PAGE_SIZE,
+      signal,
+    })
+
+    items.push(...response.items)
+    hasNext = response.hasNext
+    nextPage += 1
+  }
+
+  return items
+}
+
 function App() {
   const mapContainerRef = useRef(null)
   const selectedPlaceIdRef = useRef(null)
+  const viewportCacheRef = useRef([])
 
   const [mapPlaces, setMapPlaces] = useState([])
+  const [mapViewport, setMapViewport] = useState(null)
   const [selectedPlaceId, setSelectedPlaceId] = useState(null)
   const [selectedPlace, setSelectedPlace] = useState(null)
   const [activePhotoIndex, setActivePhotoIndex] = useState(0)
@@ -32,7 +93,7 @@ function App() {
   const visiblePlaces = mapPlaces
   const stableSelectedPlaceId = visiblePlaces.some((place) => place.id === selectedPlaceId)
     ? selectedPlaceId
-    : visiblePlaces[0]?.id ?? null
+    : null
   const selectedPlacePreview = visiblePlaces.find((place) => place.id === stableSelectedPlaceId) ?? null
   const activePlace = selectedPlace?.id === stableSelectedPlaceId ? selectedPlace : null
   const currentPhoto =
@@ -51,6 +112,46 @@ function App() {
     setDetailFeedbackMessage('')
   }
 
+  function commitMapPlaces(data, isSearch) {
+    startTransition(() => {
+      const currentSelectedPlaceId = selectedPlaceIdRef.current
+      const nextSelectedPlaceId = data.some((place) => place.id === currentSelectedPlaceId)
+        ? currentSelectedPlaceId
+        : isSearch && data[0]
+          ? data[0].id
+          : null
+
+      setMapPlaces(data)
+      setSelectedPlaceId(nextSelectedPlaceId)
+      setSelectedPlace((current) => (
+        data.some((place) => place.id === current?.id) ? current : null
+      ))
+      setMapLoadingState('ready')
+
+      if (isSearch) {
+        setMobileDetailVisible(Boolean(data[0]))
+      } else if (!nextSelectedPlaceId) {
+        setMobileDetailVisible(false)
+      }
+
+      if (nextSelectedPlaceId !== currentSelectedPlaceId) {
+        setActivePhotoIndex(0)
+        setImageViewerOpen(false)
+      }
+
+      if (!data.length) {
+        setImageViewerOpen(false)
+      }
+    })
+  }
+
+  function rememberViewportItems(viewport, items) {
+    viewportCacheRef.current = [
+      { viewport, items },
+      ...viewportCacheRef.current.filter((entry) => entry.viewport !== viewport),
+    ].slice(0, MAX_VIEWPORT_CACHE_ENTRIES)
+  }
+
   useEffect(() => {
     selectedPlaceIdRef.current = selectedPlaceId
   }, [selectedPlaceId])
@@ -61,58 +162,64 @@ function App() {
     selectedPlaceId: stableSelectedPlaceId,
     activeSearchCode,
     onPlaceSelect: selectPlace,
+    onViewportChange: setMapViewport,
   })
 
   useEffect(() => {
+    if (!activeSearchCode && !mapViewport) {
+      return undefined
+    }
+
+    if (!activeSearchCode && mapViewport) {
+      const cachedEntry = viewportCacheRef.current.find((entry) => viewportContains(entry.viewport, mapViewport))
+
+      if (cachedEntry) {
+        setMapFeedbackMessage('')
+        commitMapPlaces(cachedEntry.items, false)
+        return undefined
+      }
+    }
+
+    const abortController = new AbortController()
     let cancelled = false
 
-    async function loadMapPlaces(placeCode = '') {
+    async function loadMapPlaces() {
       try {
         setMapLoadingState('loading')
         setMapFeedbackMessage('')
-        const data = await fetchMapPlaces(placeCode)
+        const data = activeSearchCode
+          ? (await fetchMapPlacesPage({
+              code: activeSearchCode,
+              page: 0,
+              size: 8,
+              signal: abortController.signal,
+            })).items
+          : await fetchViewportPlaces(mapViewport, abortController.signal)
 
         if (cancelled) {
           return
         }
 
-        startTransition(() => {
-          const currentSelectedPlaceId = selectedPlaceIdRef.current
-          const nextSelectedPlaceId = data.some((place) => place.id === currentSelectedPlaceId)
-            ? currentSelectedPlaceId
-            : data[0]?.id ?? null
+        if (!activeSearchCode && mapViewport) {
+          rememberViewportItems(mapViewport, data)
+        }
 
-          setMapPlaces(data)
-          setSelectedPlaceId(nextSelectedPlaceId)
-          setSelectedPlace((current) => (
-            data.some((place) => place.id === current?.id) ? current : null
-          ))
-          setMapLoadingState('ready')
-          setMobileDetailVisible(Boolean(placeCode && data[0]))
-
-          if (nextSelectedPlaceId !== currentSelectedPlaceId) {
-            setActivePhotoIndex(0)
-            setImageViewerOpen(false)
-          }
-
-          if (!data.length) {
-            setImageViewerOpen(false)
-          }
-        })
+        commitMapPlaces(data, Boolean(activeSearchCode))
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && error.name !== 'AbortError') {
           setMapLoadingState('error')
           setMapFeedbackMessage(error.message)
         }
       }
     }
 
-    void loadMapPlaces(activeSearchCode)
+    void loadMapPlaces()
 
     return () => {
       cancelled = true
+      abortController.abort()
     }
-  }, [activeSearchCode])
+  }, [activeSearchCode, mapViewport])
 
   useEffect(() => {
     if (!stableSelectedPlaceId) {
@@ -267,12 +374,14 @@ function App() {
         onSearchReset={resetCodeSearch}
       />
 
-      <PlaceResultsBar
-        activeSearchCode={activeSearchCode}
-        places={visiblePlaces}
-        selectedPlaceId={stableSelectedPlaceId}
-        onSelectPlace={focusPlace}
-      />
+      <Suspense fallback={null}>
+        <PlaceResultsBar
+          activeSearchCode={activeSearchCode}
+          places={visiblePlaces}
+          selectedPlaceId={stableSelectedPlaceId}
+          onSelectPlace={focusPlace}
+        />
+      </Suspense>
 
       <MobileSearchPocket
         hidden={mobileDetailVisible}
@@ -291,31 +400,37 @@ function App() {
         </div>
       ) : null}
 
-      <PlaceDesktopPanel
-        loadingState={panelLoadingState}
-        feedbackMessage={feedbackMessage}
-        placeStoryProps={placeStoryProps}
-      />
+      <Suspense fallback={null}>
+        <PlaceDesktopPanel
+          loadingState={panelLoadingState}
+          feedbackMessage={feedbackMessage}
+          placeStoryProps={placeStoryProps}
+        />
+      </Suspense>
 
-      <PlaceMobileSheet
-        visible={mobileDetailVisible}
-        placeTitle={activePlace?.title || selectedPlacePreview?.title}
-        loadingState={panelLoadingState}
-        feedbackMessage={feedbackMessage}
-        onClose={() => setMobileDetailVisible(false)}
-        placeStoryProps={placeStoryProps}
-      />
+      <Suspense fallback={null}>
+        <PlaceMobileSheet
+          visible={mobileDetailVisible}
+          placeTitle={activePlace?.title || selectedPlacePreview?.title}
+          loadingState={panelLoadingState}
+          feedbackMessage={feedbackMessage}
+          onClose={() => setMobileDetailVisible(false)}
+          placeStoryProps={placeStoryProps}
+        />
+      </Suspense>
 
-      <ImageViewer
-        open={imageViewerOpen}
-        placeTitle={activePlace?.title || selectedPlacePreview?.title}
-        currentPhoto={currentPhoto}
-        photosCount={activePlace?.photos.length ?? 0}
-        activePhotoIndex={activePhotoIndex}
-        onClose={() => setImageViewerOpen(false)}
-        onPrevPhoto={showPreviousPhoto}
-        onNextPhoto={showNextPhoto}
-      />
+      <Suspense fallback={null}>
+        <ImageViewer
+          open={imageViewerOpen}
+          placeTitle={activePlace?.title || selectedPlacePreview?.title}
+          currentPhoto={currentPhoto}
+          photosCount={activePlace?.photos.length ?? 0}
+          activePhotoIndex={activePhotoIndex}
+          onClose={() => setImageViewerOpen(false)}
+          onPrevPhoto={showPreviousPhoto}
+          onNextPhoto={showNextPhoto}
+        />
+      </Suspense>
     </div>
   )
 }

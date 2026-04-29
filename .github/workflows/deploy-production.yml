@@ -1,0 +1,86 @@
+name: Deploy Frontend Production
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Build frontend
+        env:
+          VITE_MAPBOX_TOKEN: test-token
+          VITE_API_ORIGIN: ""
+        run: npm run build
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs:
+      - build
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$PROD_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$PROD_HOST" >> ~/.ssh/known_hosts
+
+      - name: Sync frontend repo to production server
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+        run: |
+          rsync -az --delete \
+            --exclude '/.git/' \
+            --exclude '/node_modules/' \
+            --exclude '/dist/' \
+            --exclude '/.env' \
+            --exclude '.DS_Store' \
+            -e 'ssh -i ~/.ssh/id_ed25519' \
+            ./ "${PROD_USER}@${PROD_HOST}:/opt/insta-photo-map/insta-photo-map-frontend/"
+
+      - name: Rebuild production stack
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 "${PROD_USER}@${PROD_HOST}" \
+            'chmod +x /opt/insta-photo-map/insta-photo-map-backend/scripts/deploy-production.sh && /opt/insta-photo-map/insta-photo-map-backend/scripts/deploy-production.sh'
+
+      - name: Verify production
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -fsS "http://${PROD_HOST}" >/dev/null && curl -fsS "http://${PROD_HOST}/api/places/map" >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
