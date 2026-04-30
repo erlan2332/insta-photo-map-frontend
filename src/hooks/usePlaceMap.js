@@ -68,8 +68,8 @@ function findInteractiveMapFeature(map, point) {
   }
 
   const features = map.queryRenderedFeatures([
-    [point.x - 10, point.y - 10],
-    [point.x + 10, point.y + 10],
+    [point.x - 26, point.y - 32],
+    [point.x + 26, point.y + 12],
   ], {
     layers: [PLACE_HIT_LAYER_ID, PLACE_LAYER_ID, PLACE_CLUSTER_LAYER_ID],
   })
@@ -301,12 +301,12 @@ export function usePlaceMap({
         source: PLACE_SOURCE_ID,
         filter: ['!', ['has', 'point_count']],
         paint: {
-          'circle-radius': 26,
-          'circle-color': '#000000',
-          'circle-opacity': 0.001,
+          'circle-radius': 34,
+          'circle-color': '#ffffff',
+          'circle-opacity': 0.035,
           'circle-stroke-width': 0,
           'circle-stroke-opacity': 0,
-          'circle-translate': [0, -28],
+          'circle-translate': [0, -34],
           'circle-translate-anchor': 'viewport',
         },
       })
