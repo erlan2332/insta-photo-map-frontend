@@ -456,9 +456,12 @@
 
 .story-cover__media {
   position: relative;
-  display: inline-block;
-  width: fit-content;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
   max-width: 100%;
+  height: min(58svh, 560px);
   line-height: 0;
   overflow: hidden;
   border-radius: 28px;
@@ -483,11 +486,10 @@
 
 .story-cover__media img {
   display: block;
-  width: auto;
+  width: 100%;
+  height: 100%;
   max-width: 100%;
-  height: auto;
   max-height: min(58svh, 560px);
-  margin: 0 auto;
   border-radius: 28px;
   object-fit: contain;
   transform: translateZ(0);
@@ -1065,10 +1067,6 @@
     height: 48px;
   }
 
-  .story-cover__media img {
-    max-height: min(38svh, 320px);
-  }
-
   .story-card {
     gap: 10px;
   }
@@ -1083,10 +1081,12 @@
   }
 
   .story-cover__media {
+    height: min(38svh, 320px);
     border-radius: 22px;
   }
 
   .story-cover__media img {
+    max-height: min(38svh, 320px);
     border-radius: 22px;
   }
 
