@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { resolveMediaUrl } from '../api'
 import {
   DEFAULT_CENTER,
@@ -77,6 +77,21 @@ function findInteractiveMapFeature(map, point) {
   return features[0] ?? null
 }
 
+function findClusterFeature(map, point) {
+  if (!map) {
+    return null
+  }
+
+  const features = map.queryRenderedFeatures([
+    [point.x - 18, point.y - 18],
+    [point.x + 18, point.y + 18],
+  ], {
+    layers: [PLACE_CLUSTER_LAYER_ID],
+  })
+
+  return features[0] ?? null
+}
+
 function findNearestVisiblePlace(map, point, places) {
   if (!map || !places.length) {
     return null
@@ -87,16 +102,14 @@ function findNearestVisiblePlace(map, point, places) {
 
   places.forEach((place) => {
     const projectedPoint = map.project([place.longitude, place.latitude])
-    const markerCenterX = projectedPoint.x
-    const markerCenterY = projectedPoint.y - 43
-    const deltaX = point.x - markerCenterX
-    const deltaY = point.y - markerCenterY
+    const deltaX = point.x - projectedPoint.x
+    const deltaY = point.y - projectedPoint.y
 
-    if (Math.abs(deltaX) > 32 || Math.abs(deltaY) > 36) {
+    if (Math.abs(deltaX) > 72 || deltaY < -156 || deltaY > 24) {
       return
     }
 
-    const distance = Math.hypot(deltaX, deltaY)
+    const distance = Math.hypot(deltaX / 56, (deltaY + 68) / 86)
 
     if (distance < nearestDistance) {
       nearestPlace = place
@@ -116,6 +129,9 @@ export function usePlaceMap({
   onViewportChange,
 }) {
   const mapRef = useRef(null)
+  const visiblePlacesRef = useRef(visiblePlaces)
+  const onPlaceSelectRef = useRef(onPlaceSelect)
+  const onViewportChangeRef = useRef(onViewportChange)
   const layerHandlersBoundRef = useRef(false)
   const lastViewportKeyRef = useRef('')
   const renderedPlaceIdsRef = useRef(new Set())
@@ -125,24 +141,39 @@ export function usePlaceMap({
   const [mapReady, setMapReady] = useState(false)
   const [photoMarkersReady, setPhotoMarkersReady] = useState(false)
 
-  const handlePlaceSelect = useEffectEvent((placeId) => {
-    const place = visiblePlaces.find((item) => item.id === placeId)
+  useEffect(() => {
+    visiblePlacesRef.current = visiblePlaces
+  }, [visiblePlaces])
+
+  useEffect(() => {
+    onPlaceSelectRef.current = onPlaceSelect
+  }, [onPlaceSelect])
+
+  useEffect(() => {
+    onViewportChangeRef.current = onViewportChange
+  }, [onViewportChange])
+
+  function handlePlaceSelect(placeId) {
+    const place = visiblePlacesRef.current.find((item) => item.id === placeId)
 
     if (place) {
-      onPlaceSelect(place)
+      onPlaceSelectRef.current?.(place)
     }
-  })
+  }
 
-  const handleNearestPlaceSelect = useEffectEvent((point) => {
-    const nearestPlace = findNearestVisiblePlace(mapRef.current, point, visiblePlaces)
+  function handleNearestPlaceSelect(point) {
+    const nearestPlace = findNearestVisiblePlace(mapRef.current, point, visiblePlacesRef.current)
 
     if (nearestPlace) {
-      onPlaceSelect(nearestPlace)
+      onPlaceSelectRef.current?.(nearestPlace)
+      return true
     }
-  })
 
-  const reportViewportChange = useEffectEvent(() => {
-    if (!mapRef.current || !onViewportChange) {
+    return false
+  }
+
+  function reportViewportChange() {
+    if (!mapRef.current || !onViewportChangeRef.current) {
       return
     }
 
@@ -159,8 +190,8 @@ export function usePlaceMap({
     }
 
     lastViewportKeyRef.current = nextViewportKey
-    onViewportChange(nextViewport)
-  })
+    onViewportChangeRef.current(nextViewport)
+  }
 
   function schedulePhotoMarkersReady(nextValue) {
     if (photoMarkersReadyTimeoutRef.current !== null) {
@@ -406,10 +437,20 @@ export function usePlaceMap({
       })
 
       map.on('click', (event) => {
+        const clusterFeature = findClusterFeature(map, event.point)
+
+        if (clusterFeature) {
+          focusCluster(clusterFeature)
+          return
+        }
+
+        if (handleNearestPlaceSelect(event.point)) {
+          return
+        }
+
         const feature = findInteractiveMapFeature(map, event.point)
 
         if (!feature) {
-          handleNearestPlaceSelect(event.point)
           return
         }
 
