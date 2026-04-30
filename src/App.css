@@ -56,6 +56,42 @@
   z-index: 0;
 }
 
+.map-canvas--placeholder {
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at top left, rgba(241, 192, 112, 0.1), transparent 22rem),
+    radial-gradient(circle at bottom right, rgba(35, 72, 95, 0.12), transparent 26rem);
+}
+
+.map-canvas__boot {
+  width: min(360px, calc(100vw - 36px));
+  padding: 22px 24px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 28px;
+  background:
+    linear-gradient(180deg, rgba(248, 245, 239, 0.94), rgba(243, 239, 231, 0.88)),
+    rgba(245, 244, 239, 0.9);
+  box-shadow: 0 28px 70px rgba(6, 12, 18, 0.14);
+  backdrop-filter: blur(24px);
+  text-align: left;
+}
+
+.map-canvas__boot strong,
+.map-canvas__boot span {
+  display: block;
+}
+
+.map-canvas__boot strong {
+  font-size: 1rem;
+}
+
+.map-canvas__boot span {
+  margin-top: 8px;
+  color: rgba(18, 35, 45, 0.72);
+  font-size: 0.92rem;
+}
+
 .map-gradient {
   position: absolute;
   inset: 0;

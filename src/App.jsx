@@ -1,14 +1,13 @@
 import { lazy, startTransition, Suspense, useCallback, useEffect, useRef, useState } from 'react'
-import 'mapbox-gl/dist/mapbox-gl.css'
 import './App.css'
 import MapTopBar from './components/MapTopBar'
 import MobileSearchPocket from './components/MobileSearchPocket'
 import { fetchMapPlacesPage, fetchPlaceById, resolveMediaUrl } from './api'
 import { MAPBOX_TOKEN } from './constants/map'
-import { usePlaceMap } from './hooks/usePlaceMap'
 import { preloadImage } from './utils/media'
 import { normalizeCodeQuery } from './utils/search'
 
+const MapViewport = lazy(() => import('./components/MapViewport'))
 const PlaceDesktopPanel = lazy(() => import('./components/PlaceDesktopPanel'))
 const ImageViewer = lazy(() => import('./components/ImageViewer'))
 const PlaceMobileSheet = lazy(() => import('./components/PlaceMobileSheet'))
@@ -126,7 +125,7 @@ function warmPlacePhotoVariants(place) {
 }
 
 function App() {
-  const mapContainerRef = useRef(null)
+  const mapViewportRef = useRef(null)
   const selectedPlaceIdRef = useRef(null)
   const viewportCacheRef = useRef([])
   const placeDetailsCacheRef = useRef(new Map())
@@ -145,6 +144,7 @@ function App() {
   const [detailLoadingState, setDetailLoadingState] = useState('idle')
   const [mapFeedbackMessage, setMapFeedbackMessage] = useState('')
   const [detailFeedbackMessage, setDetailFeedbackMessage] = useState('')
+  const [mapActivated, setMapActivated] = useState(false)
 
   const visiblePlaces = mapPlaces
   const stableSelectedPlaceId = visiblePlaces.some((place) => place.id === selectedPlaceId)
@@ -159,6 +159,16 @@ function App() {
       : null
   const searchMiss = Boolean(activeSearchCode) && mapLoadingState === 'ready' && visiblePlaces.length === 0
   const searchMissMessage = searchMiss ? `Места с кодом ${activeSearchCode} нет` : ''
+
+  const activateMap = useCallback(() => {
+    if (!MAPBOX_TOKEN) {
+      return
+    }
+
+    startTransition(() => {
+      setMapActivated(true)
+    })
+  }, [])
 
   function selectPlace(place) {
     const cachedPlace = placeDetailsCacheRef.current.get(place.id) ?? null
@@ -239,14 +249,23 @@ function App() {
     selectedPlaceIdRef.current = selectedPlaceId
   }, [selectedPlaceId])
 
-  const { focusPlaceOnMap } = usePlaceMap({
-    mapContainerRef,
-    visiblePlaces,
-    selectedPlaceId: stableSelectedPlaceId,
-    activeSearchCode,
-    onPlaceSelect: selectPlace,
-    onViewportChange: setMapViewport,
-  })
+  useEffect(() => {
+    if (!MAPBOX_TOKEN || mapActivated) {
+      return undefined
+    }
+
+    const activateOnIdle = () => {
+      activateMap()
+    }
+
+    if ('requestIdleCallback' in window) {
+      const idleId = window.requestIdleCallback(activateOnIdle, { timeout: 900 })
+      return () => window.cancelIdleCallback(idleId)
+    }
+
+    const timeoutId = window.setTimeout(activateOnIdle, 280)
+    return () => window.clearTimeout(timeoutId)
+  }, [activateMap, mapActivated])
 
   useEffect(() => {
     if (!activeSearchCode) {
@@ -438,8 +457,9 @@ function App() {
   }, [selectedPlace, stableSelectedPlaceId])
 
   function focusPlace(place) {
+    activateMap()
     selectPlace(place)
-    focusPlaceOnMap(place)
+    mapViewportRef.current?.focusPlaceOnMap(place)
   }
 
   function handleSearchInputChange(value) {
@@ -454,6 +474,7 @@ function App() {
       return
     }
 
+    activateMap()
     setSearchInput(normalizedCode)
     setMapFeedbackMessage('')
     setDetailFeedbackMessage('')
@@ -556,9 +577,29 @@ function App() {
     onOpenImage: () => setImageViewerOpen(true),
   }
 
+  const mapCanvasFallback = (
+    <div className="map-canvas map-canvas--placeholder">
+      <div className="map-canvas__boot">
+        <strong>Открываем карту</strong>
+        <span>Подключаем карту и ближайшие места.</span>
+      </div>
+    </div>
+  )
+
   return (
     <div className={`map-app${mobileDetailVisible ? ' is-detail-open' : ''}`}>
-      <div ref={mapContainerRef} className="map-canvas" />
+      {mapActivated && MAPBOX_TOKEN ? (
+        <Suspense fallback={mapCanvasFallback}>
+          <MapViewport
+            ref={mapViewportRef}
+            visiblePlaces={visiblePlaces}
+            selectedPlaceId={stableSelectedPlaceId}
+            activeSearchCode={activeSearchCode}
+            onPlaceSelect={selectPlace}
+            onViewportChange={setMapViewport}
+          />
+        </Suspense>
+      ) : mapCanvasFallback}
 
       <div className="map-gradient" />
 

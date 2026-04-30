@@ -5,6 +5,11 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   build: {
+    modulePreload: {
+      resolveDependencies(_filename, deps) {
+        return deps.filter((dependency) => !dependency.includes('mapbox'))
+      },
+    },
     rollupOptions: {
       output: {
         manualChunks(id) {

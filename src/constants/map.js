@@ -5,3 +5,4 @@ export const PLACE_SOURCE_ID = 'places-source'
 export const PLACE_LAYER_ID = 'places-photo-layer'
 export const PLACE_CLUSTER_LAYER_ID = 'places-cluster-layer'
 export const PLACE_CLUSTER_MAX_ZOOM = 8
+export const PLACE_PHOTO_MARKER_MIN_ZOOM = 8.2

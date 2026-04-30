@@ -15,6 +15,7 @@ function roundedRect(context, x, y, width, height, radius) {
 const externalImageCache = new Map()
 const markerImagesCache = new Map()
 let clusterMarkerImageCache = null
+let genericMarkerImagesCache = null
 const MARKER_CACHE_LIMIT = 180
 
 function rememberCacheEntry(cache, key, value) {
@@ -292,6 +293,17 @@ export async function createMapMarkerImages(url) {
 
   rememberCacheEntry(markerImagesCache, cacheKey, markerPromise)
   return markerPromise
+}
+
+export function createGenericMapMarkerImages() {
+  if (!genericMarkerImagesCache) {
+    genericMarkerImagesCache = {
+      normal: renderMapMarkerImage(null, false),
+      active: renderMapMarkerImage(null, true),
+    }
+  }
+
+  return genericMarkerImagesCache
 }
 
 export function createClusterMarkerImage() {

@@ -7,13 +7,20 @@ import {
   PLACE_CLUSTER_LAYER_ID,
   PLACE_CLUSTER_MAX_ZOOM,
   PLACE_LAYER_ID,
+  PLACE_PHOTO_MARKER_MIN_ZOOM,
   PLACE_SOURCE_ID,
 } from '../constants/map'
-import { createClusterMarkerImage, createMapMarkerImages } from '../utils/mapMarkers'
+import {
+  createClusterMarkerImage,
+  createGenericMapMarkerImages,
+  createMapMarkerImages,
+} from '../utils/mapMarkers'
 
 const VIEWPORT_PAD_FACTOR = 0.4
 const VIEWPORT_PRECISION = 1000
 const PLACE_CLUSTER_ICON_ID = 'place-cluster-icon'
+const PLACE_GENERIC_ICON_ID = 'place-generic-icon'
+const PLACE_GENERIC_ACTIVE_ICON_ID = 'place-generic-active-icon'
 const MARKER_SYNC_BATCH_SIZE = 6
 
 function clampLatitude(value) {
@@ -70,6 +77,7 @@ export function usePlaceMap({
   const shouldAutoFitDefaultViewRef = useRef(true)
   const previousSearchCodeRef = useRef('')
   const [mapReady, setMapReady] = useState(false)
+  const [photoMarkersEnabled, setPhotoMarkersEnabled] = useState(false)
 
   const handlePlaceSelect = useEffectEvent((placeId) => {
     const place = visiblePlaces.find((item) => item.id === placeId)
@@ -98,6 +106,14 @@ export function usePlaceMap({
 
     lastViewportKeyRef.current = nextViewportKey
     onViewportChange(nextViewport)
+  })
+
+  const syncPhotoMarkerMode = useEffectEvent(() => {
+    if (!mapRef.current) {
+      return
+    }
+
+    setPhotoMarkersEnabled(mapRef.current.getZoom() >= PLACE_PHOTO_MARKER_MIN_ZOOM)
   })
 
   useEffect(() => {
@@ -142,10 +158,12 @@ export function usePlaceMap({
           'horizon-blend': 0.08,
           'star-intensity': 0,
         })
+        syncPhotoMarkerMode()
         setMapReady(true)
         reportViewportChange()
       })
       map.on('moveend', reportViewportChange)
+      map.on('zoomend', syncPhotoMarkerMode)
 
       mapRef.current = map
     }
@@ -185,6 +203,22 @@ export function usePlaceMap({
       if (clusterMarkerImage) {
         map.addImage(PLACE_CLUSTER_ICON_ID, clusterMarkerImage.image, {
           pixelRatio: clusterMarkerImage.pixelRatio,
+        })
+      }
+    }
+
+    if (!map.hasImage(PLACE_GENERIC_ICON_ID) || !map.hasImage(PLACE_GENERIC_ACTIVE_ICON_ID)) {
+      const genericMarkerImages = createGenericMapMarkerImages()
+
+      if (genericMarkerImages.normal && !map.hasImage(PLACE_GENERIC_ICON_ID)) {
+        map.addImage(PLACE_GENERIC_ICON_ID, genericMarkerImages.normal.image, {
+          pixelRatio: genericMarkerImages.normal.pixelRatio,
+        })
+      }
+
+      if (genericMarkerImages.active && !map.hasImage(PLACE_GENERIC_ACTIVE_ICON_ID)) {
+        map.addImage(PLACE_GENERIC_ACTIVE_ICON_ID, genericMarkerImages.active.image, {
+          pixelRatio: genericMarkerImages.active.pixelRatio,
         })
       }
     }
@@ -323,6 +357,8 @@ export function usePlaceMap({
           id: place.id,
           iconId: `place-icon-${place.id}`,
           activeIconId: `place-icon-${place.id}-active`,
+          fallbackIconId: PLACE_GENERIC_ICON_ID,
+          fallbackActiveIconId: PLACE_GENERIC_ACTIVE_ICON_ID,
         },
       })),
     }
@@ -353,11 +389,13 @@ export function usePlaceMap({
     let cancelled = false
 
     async function syncPlaceLayer() {
-      const missingPlaces = visiblePlaces.filter((place) => {
+      const missingPlaces = photoMarkersEnabled
+        ? visiblePlaces.filter((place) => {
         const iconId = `place-icon-${place.id}`
         const activeIconId = `place-icon-${place.id}-active`
         return !map.hasImage(iconId) || !map.hasImage(activeIconId)
-      })
+          })
+        : []
 
       for (let index = 0; index < missingPlaces.length; index += MARKER_SYNC_BATCH_SIZE) {
         const batch = missingPlaces.slice(index, index + MARKER_SYNC_BATCH_SIZE)
@@ -422,7 +460,7 @@ export function usePlaceMap({
     return () => {
       cancelled = true
     }
-  }, [mapReady, visiblePlaces])
+  }, [mapReady, visiblePlaces, photoMarkersEnabled])
 
   useEffect(() => {
     if (previousSearchCodeRef.current && !activeSearchCode) {
@@ -437,13 +475,16 @@ export function usePlaceMap({
       return
     }
 
+    const iconProperty = photoMarkersEnabled ? 'iconId' : 'fallbackIconId'
+    const activeIconProperty = photoMarkersEnabled ? 'activeIconId' : 'fallbackActiveIconId'
+
     mapRef.current.setLayoutProperty(PLACE_LAYER_ID, 'icon-image', [
       'case',
       ['==', ['get', 'id'], selectedPlaceId ?? -1],
-      ['get', 'activeIconId'],
-      ['get', 'iconId'],
+      ['get', activeIconProperty],
+      ['get', iconProperty],
     ])
-  }, [mapReady, selectedPlaceId])
+  }, [mapReady, photoMarkersEnabled, selectedPlaceId])
 
   useEffect(() => {
     if (!mapRef.current || !visiblePlaces.length) {
