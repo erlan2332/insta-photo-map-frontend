@@ -7,7 +7,6 @@ import {
   PLACE_CLUSTER_LAYER_ID,
   PLACE_CLUSTER_MAX_ZOOM,
   PLACE_LAYER_ID,
-  PLACE_PHOTO_MARKER_MIN_ZOOM,
   PLACE_SOURCE_ID,
 } from '../constants/map'
 import {
@@ -76,8 +75,9 @@ export function usePlaceMap({
   const renderedPlaceIdsRef = useRef(new Set())
   const shouldAutoFitDefaultViewRef = useRef(true)
   const previousSearchCodeRef = useRef('')
+  const photoMarkersReadyTimeoutRef = useRef(null)
   const [mapReady, setMapReady] = useState(false)
-  const [photoMarkersEnabled, setPhotoMarkersEnabled] = useState(false)
+  const [photoMarkersReady, setPhotoMarkersReady] = useState(false)
 
   const handlePlaceSelect = useEffectEvent((placeId) => {
     const place = visiblePlaces.find((item) => item.id === placeId)
@@ -108,13 +108,16 @@ export function usePlaceMap({
     onViewportChange(nextViewport)
   })
 
-  const syncPhotoMarkerMode = useEffectEvent(() => {
-    if (!mapRef.current) {
-      return
+  function schedulePhotoMarkersReady(nextValue) {
+    if (photoMarkersReadyTimeoutRef.current !== null) {
+      window.clearTimeout(photoMarkersReadyTimeoutRef.current)
     }
 
-    setPhotoMarkersEnabled(mapRef.current.getZoom() >= PLACE_PHOTO_MARKER_MIN_ZOOM)
-  })
+    photoMarkersReadyTimeoutRef.current = window.setTimeout(() => {
+      setPhotoMarkersReady(nextValue)
+      photoMarkersReadyTimeoutRef.current = null
+    }, 0)
+  }
 
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current || !MAPBOX_TOKEN) {
@@ -158,12 +161,10 @@ export function usePlaceMap({
           'horizon-blend': 0.08,
           'star-intensity': 0,
         })
-        syncPhotoMarkerMode()
         setMapReady(true)
         reportViewportChange()
       })
       map.on('moveend', reportViewportChange)
-      map.on('zoomend', syncPhotoMarkerMode)
 
       mapRef.current = map
     }
@@ -377,6 +378,7 @@ export function usePlaceMap({
         }
       })
       renderedPlaceIdsRef.current = new Set()
+      schedulePhotoMarkersReady(false)
       source.setData({
         type: 'FeatureCollection',
         features: [],
@@ -387,16 +389,43 @@ export function usePlaceMap({
     source.setData(nextData)
 
     let cancelled = false
+    let idleCallbackId = null
+    let timeoutId = null
+
+    const nextPlaceIds = new Set(visiblePlaces.map((place) => place.id))
+    const missingPlaces = visiblePlaces.filter((place) => {
+      const iconId = `place-icon-${place.id}`
+      const activeIconId = `place-icon-${place.id}-active`
+      return !map.hasImage(iconId) || !map.hasImage(activeIconId)
+    })
+
+    if (!missingPlaces.length) {
+      renderedPlaceIdsRef.current.forEach((placeId) => {
+        if (nextPlaceIds.has(placeId)) {
+          return
+        }
+
+        const iconId = `place-icon-${placeId}`
+        const activeIconId = `place-icon-${placeId}-active`
+
+        if (map.hasImage(iconId)) {
+          map.removeImage(iconId)
+        }
+
+        if (map.hasImage(activeIconId)) {
+          map.removeImage(activeIconId)
+        }
+      })
+
+      renderedPlaceIdsRef.current = nextPlaceIds
+      schedulePhotoMarkersReady(true)
+      source.setData(nextData)
+      return
+    }
+
+    schedulePhotoMarkersReady(false)
 
     async function syncPlaceLayer() {
-      const missingPlaces = photoMarkersEnabled
-        ? visiblePlaces.filter((place) => {
-        const iconId = `place-icon-${place.id}`
-        const activeIconId = `place-icon-${place.id}-active`
-        return !map.hasImage(iconId) || !map.hasImage(activeIconId)
-          })
-        : []
-
       for (let index = 0; index < missingPlaces.length; index += MARKER_SYNC_BATCH_SIZE) {
         const batch = missingPlaces.slice(index, index + MARKER_SYNC_BATCH_SIZE)
 
@@ -432,8 +461,6 @@ export function usePlaceMap({
         return
       }
 
-      const nextPlaceIds = new Set(visiblePlaces.map((place) => place.id))
-
       renderedPlaceIdsRef.current.forEach((placeId) => {
         if (nextPlaceIds.has(placeId)) {
           return
@@ -453,14 +480,33 @@ export function usePlaceMap({
 
       renderedPlaceIdsRef.current = nextPlaceIds
       source.setData(nextData)
+      schedulePhotoMarkersReady(true)
     }
 
-    syncPlaceLayer()
+    const startWarmup = () => {
+      void syncPlaceLayer()
+    }
+
+    if ('requestIdleCallback' in window) {
+      idleCallbackId = window.requestIdleCallback(startWarmup, { timeout: 420 })
+    } else {
+      timeoutId = window.setTimeout(startWarmup, 180)
+    }
 
     return () => {
       cancelled = true
+      if (idleCallbackId !== null && 'cancelIdleCallback' in window) {
+        window.cancelIdleCallback(idleCallbackId)
+      }
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId)
+      }
+      if (photoMarkersReadyTimeoutRef.current !== null) {
+        window.clearTimeout(photoMarkersReadyTimeoutRef.current)
+        photoMarkersReadyTimeoutRef.current = null
+      }
     }
-  }, [mapReady, visiblePlaces, photoMarkersEnabled])
+  }, [mapReady, visiblePlaces])
 
   useEffect(() => {
     if (previousSearchCodeRef.current && !activeSearchCode) {
@@ -475,8 +521,8 @@ export function usePlaceMap({
       return
     }
 
-    const iconProperty = photoMarkersEnabled ? 'iconId' : 'fallbackIconId'
-    const activeIconProperty = photoMarkersEnabled ? 'activeIconId' : 'fallbackActiveIconId'
+    const iconProperty = photoMarkersReady ? 'iconId' : 'fallbackIconId'
+    const activeIconProperty = photoMarkersReady ? 'activeIconId' : 'fallbackActiveIconId'
 
     mapRef.current.setLayoutProperty(PLACE_LAYER_ID, 'icon-image', [
       'case',
@@ -484,7 +530,7 @@ export function usePlaceMap({
       ['get', activeIconProperty],
       ['get', iconProperty],
     ])
-  }, [mapReady, photoMarkersEnabled, selectedPlaceId])
+  }, [mapReady, photoMarkersReady, selectedPlaceId])
 
   useEffect(() => {
     if (!mapRef.current || !visiblePlaces.length) {
