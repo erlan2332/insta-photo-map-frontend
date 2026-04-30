@@ -10,6 +10,7 @@ function StoryCoverImage({ currentPhoto, place }) {
     currentPhoto?.thumbnailUrl || currentPhoto?.previewUrl || currentPhoto?.url || place.coverPhotoUrl,
   )
   const initialDisplaySrc = hasPreloadedImage(previewSrc) ? previewSrc : (placeholderSrc || previewSrc)
+  const [aspectRatio, setAspectRatio] = useState(null)
   const [displaySrc, setDisplaySrc] = useState(() => (
     hasPreloadedImage(previewSrc) ? previewSrc : (placeholderSrc || previewSrc)
   ))
@@ -31,13 +32,27 @@ function StoryCoverImage({ currentPhoto, place }) {
   }, [initialDisplaySrc, previewSrc])
 
   return (
-    <img
-      key={previewSrc}
-      src={displaySrc || previewSrc}
-      alt={currentPhoto?.altText || place.title}
-      fetchPriority="high"
-      decoding="async"
-    />
+    <div
+      className="story-cover__image-shell"
+      style={aspectRatio ? { '--story-media-ratio': aspectRatio } : undefined}
+    >
+      <img
+        key={previewSrc}
+        src={displaySrc || previewSrc}
+        alt={currentPhoto?.altText || place.title}
+        fetchPriority="high"
+        decoding="async"
+        onLoad={(event) => {
+          const { naturalWidth, naturalHeight } = event.currentTarget
+
+          if (!naturalWidth || !naturalHeight) {
+            return
+          }
+
+          setAspectRatio(naturalWidth / naturalHeight)
+        }}
+      />
+    </div>
   )
 }
 
