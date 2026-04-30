@@ -463,6 +463,12 @@
   overflow: hidden;
   border-radius: 28px;
   isolation: isolate;
+  cursor: zoom-in;
+}
+
+.story-cover__media:focus-visible {
+  outline: 3px solid rgba(241, 192, 112, 0.86);
+  outline-offset: 4px;
 }
 
 .story-cover__media img {

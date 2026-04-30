@@ -6,6 +6,17 @@ export function formatDate(value) {
   return new Intl.DateTimeFormat('ru-RU', {
     day: 'numeric',
     month: 'long',
+    year: 'numeric',
+  }).format(new Date(value))
+}
+
+export function formatYear(value) {
+  if (!value) {
+    return ''
+  }
+
+  return new Intl.DateTimeFormat('ru-RU', {
+    year: 'numeric',
   }).format(new Date(value))
 }
 

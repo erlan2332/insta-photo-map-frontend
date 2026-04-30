@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { ArrowLeft, ArrowRight, Camera, ExternalLink, ZoomIn } from 'lucide-react'
 import { resolveMediaUrl } from '../api'
 import { hasPreloadedImage, preloadImage } from '../utils/media'
-import { formatDate } from '../utils/formatters'
+import { formatDate, formatYear } from '../utils/formatters'
 
 function StoryCoverImage({ currentPhoto, place }) {
   const previewSrc = resolveMediaUrl(currentPhoto?.previewUrl || currentPhoto?.url || place.coverPhotoUrl)
@@ -60,11 +60,25 @@ export default function PlaceStory({
     )
   }
 
+  function handleCoverKeyDown(event) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      onOpenImage()
+    }
+  }
+
   return (
     <div className="story-card">
       <div className="story-cover">
         <div className="story-cover__frame">
-          <div className="story-cover__media">
+          <div
+            className="story-cover__media"
+            role="button"
+            tabIndex={0}
+            aria-label="Открыть фото крупно"
+            onClick={onOpenImage}
+            onKeyDown={handleCoverKeyDown}
+          >
             <StoryCoverImage
               key={resolveMediaUrl(currentPhoto?.previewUrl || currentPhoto?.url || place.coverPhotoUrl)}
               currentPhoto={currentPhoto}
@@ -100,6 +114,7 @@ export default function PlaceStory({
 
         <div className="story-toolbar__stats">
           <strong>Код {place.placeCode}</strong>
+          {place.createdAt ? <span>{formatYear(place.createdAt)}</span> : null}
         </div>
 
         <button
