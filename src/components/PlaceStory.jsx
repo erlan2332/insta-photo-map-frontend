@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, ArrowRight, Camera, ExternalLink, ZoomIn } from 'lucide-react'
 import { resolveMediaUrl } from '../api'
-import { hasPreloadedImage, preloadImage } from '../utils/media'
+import { getPreloadedImageMetadata, hasPreloadedImage, preloadImage, preloadImageMetadata } from '../utils/media'
 import { formatDate, formatYear } from '../utils/formatters'
 
 function StoryCoverImage({ currentPhoto, place }) {
@@ -10,9 +10,38 @@ function StoryCoverImage({ currentPhoto, place }) {
     currentPhoto?.thumbnailUrl || currentPhoto?.previewUrl || currentPhoto?.url || place.coverPhotoUrl,
   )
   const initialDisplaySrc = hasPreloadedImage(previewSrc) ? previewSrc : (placeholderSrc || previewSrc)
+  const [aspectRatio, setAspectRatio] = useState(() => {
+    const previewMetadata = getPreloadedImageMetadata(previewSrc)
+    const placeholderMetadata = getPreloadedImageMetadata(placeholderSrc)
+
+    return previewMetadata?.aspectRatio || placeholderMetadata?.aspectRatio || null
+  })
   const [displaySrc, setDisplaySrc] = useState(() => (
     hasPreloadedImage(previewSrc) ? previewSrc : (placeholderSrc || previewSrc)
   ))
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function syncAspectRatio() {
+      const initialMetadata = getPreloadedImageMetadata(placeholderSrc) || getPreloadedImageMetadata(previewSrc)
+      if (initialMetadata?.aspectRatio && !cancelled) {
+        setAspectRatio(initialMetadata.aspectRatio)
+      }
+
+      const metadata = await preloadImageMetadata(placeholderSrc || previewSrc)
+
+      if (!cancelled && metadata?.aspectRatio) {
+        setAspectRatio(metadata.aspectRatio)
+      }
+    }
+
+    void syncAspectRatio()
+
+    return () => {
+      cancelled = true
+    }
+  }, [placeholderSrc, previewSrc])
 
   useEffect(() => {
     let cancelled = false
@@ -31,13 +60,18 @@ function StoryCoverImage({ currentPhoto, place }) {
   }, [initialDisplaySrc, previewSrc])
 
   return (
-    <img
-      key={previewSrc}
-      src={displaySrc || previewSrc}
-      alt={currentPhoto?.altText || place.title}
-      fetchPriority="high"
-      decoding="async"
-    />
+    <div
+      className="story-cover__image-shell"
+      style={aspectRatio ? { '--story-media-ratio': aspectRatio } : undefined}
+    >
+      <img
+        key={previewSrc}
+        src={displaySrc || previewSrc}
+        alt={currentPhoto?.altText || place.title}
+        fetchPriority="high"
+        decoding="async"
+      />
+    </div>
   )
 }
 
