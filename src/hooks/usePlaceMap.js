@@ -6,6 +6,7 @@ import {
   MAPBOX_TOKEN,
   PLACE_CLUSTER_LAYER_ID,
   PLACE_CLUSTER_MAX_ZOOM,
+  PLACE_HIT_LAYER_ID,
   PLACE_LAYER_ID,
   PLACE_SOURCE_ID,
 } from '../constants/map'
@@ -70,7 +71,7 @@ function findInteractiveMapFeature(map, point) {
     [point.x - 10, point.y - 10],
     [point.x + 10, point.y + 10],
   ], {
-    layers: [PLACE_LAYER_ID, PLACE_CLUSTER_LAYER_ID],
+    layers: [PLACE_HIT_LAYER_ID, PLACE_LAYER_ID, PLACE_CLUSTER_LAYER_ID],
   })
 
   return features[0] ?? null
@@ -293,6 +294,24 @@ export function usePlaceMap({
       })
     }
 
+    if (!map.getLayer(PLACE_HIT_LAYER_ID)) {
+      map.addLayer({
+        id: PLACE_HIT_LAYER_ID,
+        type: 'circle',
+        source: PLACE_SOURCE_ID,
+        filter: ['!', ['has', 'point_count']],
+        paint: {
+          'circle-radius': 26,
+          'circle-color': '#000000',
+          'circle-opacity': 0.001,
+          'circle-stroke-width': 0,
+          'circle-stroke-opacity': 0,
+          'circle-translate': [0, -28],
+          'circle-translate-anchor': 'viewport',
+        },
+      })
+    }
+
     if (!layerHandlersBoundRef.current) {
       const focusCluster = (feature) => {
         const clusterId = Number(feature?.properties?.cluster_id)
@@ -341,6 +360,13 @@ export function usePlaceMap({
         }
       })
 
+      map.on('click', PLACE_HIT_LAYER_ID, (event) => {
+        const feature = event.features?.[0]
+        if (feature) {
+          focusPlaceFeature(feature)
+        }
+      })
+
       map.on('click', (event) => {
         const feature = findInteractiveMapFeature(map, event.point)
 
@@ -353,7 +379,7 @@ export function usePlaceMap({
           return
         }
 
-        if (feature.layer?.id === PLACE_LAYER_ID) {
+        if (feature.layer?.id === PLACE_LAYER_ID || feature.layer?.id === PLACE_HIT_LAYER_ID) {
           focusPlaceFeature(feature)
         }
       })
@@ -362,11 +388,19 @@ export function usePlaceMap({
         map.getCanvas().style.cursor = 'pointer'
       })
 
+      map.on('mouseenter', PLACE_HIT_LAYER_ID, () => {
+        map.getCanvas().style.cursor = 'pointer'
+      })
+
       map.on('mouseenter', PLACE_CLUSTER_LAYER_ID, () => {
         map.getCanvas().style.cursor = 'pointer'
       })
 
       map.on('mouseleave', PLACE_LAYER_ID, () => {
+        map.getCanvas().style.cursor = ''
+      })
+
+      map.on('mouseleave', PLACE_HIT_LAYER_ID, () => {
         map.getCanvas().style.cursor = ''
       })
 
