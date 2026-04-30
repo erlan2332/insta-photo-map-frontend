@@ -77,6 +77,36 @@ function findInteractiveMapFeature(map, point) {
   return features[0] ?? null
 }
 
+function findNearestVisiblePlace(map, point, places) {
+  if (!map || !places.length) {
+    return null
+  }
+
+  let nearestPlace = null
+  let nearestDistance = Number.POSITIVE_INFINITY
+
+  places.forEach((place) => {
+    const projectedPoint = map.project([place.longitude, place.latitude])
+    const markerCenterX = projectedPoint.x
+    const markerCenterY = projectedPoint.y - 43
+    const deltaX = point.x - markerCenterX
+    const deltaY = point.y - markerCenterY
+
+    if (Math.abs(deltaX) > 32 || Math.abs(deltaY) > 36) {
+      return
+    }
+
+    const distance = Math.hypot(deltaX, deltaY)
+
+    if (distance < nearestDistance) {
+      nearestPlace = place
+      nearestDistance = distance
+    }
+  })
+
+  return nearestPlace
+}
+
 export function usePlaceMap({
   mapContainerRef,
   visiblePlaces,
@@ -100,6 +130,14 @@ export function usePlaceMap({
 
     if (place) {
       onPlaceSelect(place)
+    }
+  })
+
+  const handleNearestPlaceSelect = useEffectEvent((point) => {
+    const nearestPlace = findNearestVisiblePlace(mapRef.current, point, visiblePlaces)
+
+    if (nearestPlace) {
+      onPlaceSelect(nearestPlace)
     }
   })
 
@@ -371,6 +409,7 @@ export function usePlaceMap({
         const feature = findInteractiveMapFeature(map, event.point)
 
         if (!feature) {
+          handleNearestPlaceSelect(event.point)
           return
         }
 
