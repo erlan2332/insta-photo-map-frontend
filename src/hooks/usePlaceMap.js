@@ -61,6 +61,21 @@ function createViewportSnapshot(map) {
   }
 }
 
+function findInteractiveMapFeature(map, point) {
+  if (!map) {
+    return null
+  }
+
+  const features = map.queryRenderedFeatures([
+    [point.x - 10, point.y - 10],
+    [point.x + 10, point.y + 10],
+  ], {
+    layers: [PLACE_LAYER_ID, PLACE_CLUSTER_LAYER_ID],
+  })
+
+  return features[0] ?? null
+}
+
 export function usePlaceMap({
   mapContainerRef,
   visiblePlaces,
@@ -279,8 +294,7 @@ export function usePlaceMap({
     }
 
     if (!layerHandlersBoundRef.current) {
-      map.on('click', PLACE_CLUSTER_LAYER_ID, (event) => {
-        const feature = event.features?.[0]
+      const focusCluster = (feature) => {
         const clusterId = Number(feature?.properties?.cluster_id)
         const source = map.getSource(PLACE_SOURCE_ID)
 
@@ -303,14 +317,44 @@ export function usePlaceMap({
             duration: 650,
           })
         })
-      })
+      }
 
-      map.on('click', PLACE_LAYER_ID, (event) => {
-        const feature = event.features?.[0]
+      const focusPlaceFeature = (feature) => {
         const placeId = Number(feature?.properties?.id)
 
         if (!Number.isNaN(placeId)) {
           handlePlaceSelect(placeId)
+        }
+      }
+
+      map.on('click', PLACE_CLUSTER_LAYER_ID, (event) => {
+        const feature = event.features?.[0]
+        if (feature) {
+          focusCluster(feature)
+        }
+      })
+
+      map.on('click', PLACE_LAYER_ID, (event) => {
+        const feature = event.features?.[0]
+        if (feature) {
+          focusPlaceFeature(feature)
+        }
+      })
+
+      map.on('click', (event) => {
+        const feature = findInteractiveMapFeature(map, event.point)
+
+        if (!feature) {
+          return
+        }
+
+        if (feature.layer?.id === PLACE_CLUSTER_LAYER_ID) {
+          focusCluster(feature)
+          return
+        }
+
+        if (feature.layer?.id === PLACE_LAYER_ID) {
+          focusPlaceFeature(feature)
         }
       })
 

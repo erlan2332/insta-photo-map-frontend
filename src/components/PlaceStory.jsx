@@ -73,12 +73,14 @@ export default function PlaceStory({
         <div className="story-cover__frame">
           <div
             className="story-cover__media"
-            role="button"
-            tabIndex={0}
-            aria-label="Открыть фото крупно"
-            onClick={onOpenImage}
-            onKeyDown={handleCoverKeyDown}
           >
+            <button
+              type="button"
+              className="story-cover__tap-target"
+              aria-label="Открыть фото крупно"
+              onClick={onOpenImage}
+              onKeyDown={handleCoverKeyDown}
+            />
             <StoryCoverImage
               key={resolveMediaUrl(currentPhoto?.previewUrl || currentPhoto?.url || place.coverPhotoUrl)}
               currentPhoto={currentPhoto}
@@ -87,7 +89,10 @@ export default function PlaceStory({
             <button
               type="button"
               className="story-cover__zoom"
-              onClick={onOpenImage}
+              onClick={(event) => {
+                event.stopPropagation()
+                onOpenImage()
+              }}
               aria-label="Открыть фото крупно"
             >
               <ZoomIn size={16} />
